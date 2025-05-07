@@ -1,51 +1,66 @@
 from flask import Flask, request, jsonify
-from sympy import symbols, sqrt, log, sympify
-import re
 
 app = Flask(__name__)
-x = symbols('x')  # المتغير الرئيسي في الدوال
+
+# يمكننا لاحقًا استبداله بـ session ID من Dialogflow إذا أردنا تتبع عدة مستخدمين
+conversation_state = {}
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
-    data = request.get_json()
-    user_input = data['queryResult']['queryText']  # النص الذي أرسله التلميذ
+    req = request.get_json()
+    user_input = req.get('queryResult', {}).get('queryText', '')
+    session = req.get('session', 'default')  # لتتبع المستخدم
 
-    # محاولة استخراج الدالة من النص
-    match = re.search(r"f\(x\)\s*=\s*(.*)", user_input)
-    if match:
-        expr_str = match.group(1)
-        try:
-            expr = sympify(expr_str)
-            conditions = []
+    # إذا لم يتم تحديد مرحلة بعد
+    if session not in conversation_state:
+        conversation_state[session] = 'analyse'
 
-            # الجذر: يجب أن يكون ما تحت الجذر ≥ 0
-            if expr.has(sqrt):
-                for r in expr.atoms(sqrt):
-                    arg = r.args[0]
-                    conditions.append(f"{arg} ≥ 0")
+    current_step = conversation_state[session]
 
-            # اللوغاريتم: يجب أن يكون ما داخل log > 0
-            if expr.has(log):
-                for r in expr.atoms(log):
-                    arg = r.args[0]
-                    conditions.append(f"{arg} > 0")
+    # === Étape 1: lancement de l'analyse ===
+    if current_step == 'analyse':
+        conversation_state[session] = 'racine'
+        return respond("Commençons par analyser cette fonction étape par étape.\nQuel est l'expression à l'intérieur de la racine carrée ?")
 
-            # المقام: يجب أن لا يساوي صفر
-            denom = expr.as_numer_denom()[1]
-            if denom != 1:
-                conditions.append(f"{denom} ≠ 0")
+    # === Étape 2: vérifier condition racine ===
+    elif current_step == 'racine':
+        if 'x - 2' in user_input or 'x-2' in user_input:
+            conversation_state[session] = 'condition_racine'
+            return respond("Parfait ! Et quelle condition doit remplir une racine carrée pour que l'expression soit définie ?")
+        else:
+            return respond("Réessaie. Quelle est l'expression exacte sous la racine ?")
 
-            if conditions:
-                message = "لنبدأ بتحليل الدالة.\nما رأيك في الشروط التالية؟\n- " + "\n- ".join(conditions)
-            else:
-                message = "لا توجد جذور أو مقامات أو لوغاريتمات، إذن المجال هو R."
+    # === Étape 3: condition racine ===
+    elif current_step == 'condition_racine':
+        if '≥' in user_input or '>=' in user_input:
+            conversation_state[session] = 'denominateur'
+            return respond("Très bien, donc x ≥ 2.\nMaintenant, cette racine est dans un dénominateur. Qu'est-ce qu'on doit éviter ?")
+        else:
+            return respond("Essaie d'exprimer la condition pour que la racine carrée soit définie.")
 
-        except Exception:
-            message = "عذرًا، لم أتمكن من فهم الدالة. حاول كتابتها بشكل أبسط مثل: f(x)=1/sqrt(x-2)"
-    else:
-        message = "يرجى كتابة الدالة بهذا الشكل: f(x) = ..."
+    # === Étape 4: condition dénominateur ===
+    elif current_step == 'denominateur':
+        if '≠ 0' in user_input or '=/= 0' in user_input or 'x ≠ 2' in user_input:
+            conversation_state[session] = 'conclusion'
+            return respond("Exactement ! Alors, quelle est l'ensemble des valeurs de x qui vérifient toutes ces conditions ?")
+        else:
+            return respond("On cherche à éviter que le dénominateur soit nul. Que doit-on faire ?")
 
-    return jsonify({'fulfillmentText': message})
+    # === Étape 5: conclusion ===
+    elif current_step == 'conclusion':
+        if ']2, +∞[' in user_input or '2 < x' in user_input:
+            conversation_state.pop(session)
+            return respond("Parfait ! Le domaine de définition de f est D = ]2, +∞[\nSouhaites-tu essayer une autre fonction ?")
+        else:
+            return respond("Essaie d'exprimer le domaine de définition avec une bonne notation.")
+
+    # Par défaut
+    return respond("Je n'ai pas compris. Peux-tu reformuler ?")
+
+def respond(text):
+    return jsonify({'fulfillmentText': text})
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=10000, debug=True)
+    import os
+    port = int(os.environ.get('PORT', 10000))
+    app.run(host='0.0.0.0', port=port)
