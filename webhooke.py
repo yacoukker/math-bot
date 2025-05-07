@@ -28,8 +28,10 @@ def webhook():
     text_str = ' '.join(tokens)
 
     # تحديد المرحلة الحالية
-    if session not in conversation_state:
+    if session not in conversation_state or "f(x)" in user_text:
         conversation_state[session] = 'analyse'
+        return respond("Commençons par analyser cette fonction étape par étape.\nQuel est l'expression à l'intérieur de la racine carrée ?")
+
 
     step = conversation_state[session]
 
