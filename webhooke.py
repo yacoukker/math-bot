@@ -22,6 +22,7 @@ def webhook():
             return respond("Merci d’écrire la fonction sous la forme : f(x) = ...")
         try:
             expr = sympify(expr_str)
+            print(expr)
         except:
             return respond("Je n’ai pas pu comprendre la fonction. Essaie encore.")
 
