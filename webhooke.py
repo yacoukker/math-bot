@@ -1,38 +1,31 @@
 from flask import Flask, request, jsonify
-from openai import OpenAI
-import os
-
-# إنشاء عميل OpenAI مع مفتاح API من المتغير البيئي
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+import requests
 
 app = Flask(__name__)
+
+HUGGINGFACE_API_URL = "https://api-inference.huggingface.co/models/google/flan-t5-large"
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
     req = request.get_json()
     user_input = req.get('queryResult', {}).get('queryText', '')
 
-    # إرسال الرسالة إلى GPT
-    gpt_reply = ask_gpt(user_input)
-    return jsonify({'fulfillmentText': gpt_reply})
+    # أرسل الدالة إلى نموذج مجاني من Hugging Face
+    result = ask_huggingface(f"Aide-moi à trouver le domaine de définition de : {user_input}")
+    return jsonify({'fulfillmentText': result})
 
-def ask_gpt(message):
-    response = client.chat.completions.create(
-        model="gpt-3.5-turbo",
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    "Tu es un assistant pédagogique en mathématiques. "
-                    "Tu aides l'élève à déterminer le domaine de définition d'une fonction, "
-                    "en posant des questions étape par étape, et en expliquant chaque notion au besoin."
-                )
-            },
-            {"role": "user", "content": f"Aide-moi à analyser la fonction suivante : {message}"}
-        ]
-    )
-    return response.choices[0].message.content
+def ask_huggingface(prompt):
+    payload = {"inputs": prompt}
+    response = requests.post(HUGGINGFACE_API_URL, json=payload)
+
+    if response.status_code == 200:
+        result = response.json()
+        if isinstance(result, list) and 'generated_text' in result[0]:
+            return result[0]['generated_text']
+        else:
+            return "Je n’ai pas pu comprendre la réponse."
+    else:
+        return "Le service Hugging Face est temporairement indisponible."
 
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 10000))
-    app.run(host='0.0.0.0', port=port)
+    app.run(host='0.0.0.0', port=10000)
