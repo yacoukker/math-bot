@@ -42,7 +42,7 @@ def webhook():
 
     # === Étape 2: réponse sur le contenu de la racine ===
     elif step == 'racine':
-        if 'x' in tokens and ('-2' in tokens or 'moins' in tokens or 'deux' in tokens):
+        if "x - 2" in user_text or "x-2" in user_text or "x moins 2" in user_text:
             conversation_state[session] = 'condition_racine'
             return respond("Parfait ! Et quelle condition doit remplir une racine carrée pour que l'expression soit définie ?")
         else:
