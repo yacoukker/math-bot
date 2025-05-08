@@ -1,82 +1,74 @@
 from flask import Flask, request, jsonify
-import spacy
+from sympy import symbols, sympify, sqrt, log, S
 import os
+import re
 
 app = Flask(__name__)
+x = symbols('x')
 
-# تحميل نموذج spaCy الفرنسي
-try:
-    nlp = spacy.load("fr_core_news_sm")
-except:
-    from spacy.cli import download
-    download("fr_core_news_sm")
-    nlp = spacy.load("fr_core_news_sm")
-
-# تتبع حالة المحادثة لكل session
-conversation_state = {}
+# لتتبع حالة المحادثة حسب session
+session_states = {}
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
     req = request.get_json()
-    user_input = req.get('queryResult', {}).get('queryText', '')
+    user_text = req.get('queryResult', {}).get('queryText', '')
     session = req.get('session', 'default')
-    user_text = user_input.lower()
 
-    # تحليل النص باستخدام spaCy
-    doc = nlp(user_text)
-    tokens = [token.text.lower() for token in doc]
-    text_str = ' '.join(tokens)
+    # إذا لم تكن هناك حالة بعد، نبدأ بتحليل الدالة
+    if session not in session_states:
+        expr = extract_expression(user_text)
+        if expr is None:
+            return respond("Je n'ai pas compris la fonction. Peux-tu écrire quelque chose comme : f(x) = 1 / √(x - 2) ?")
+        try:
+            parsed_expr = sympify(expr)
+        except:
+            return respond("Désolé, je n'arrive pas à comprendre cette fonction.")
 
-    # تحديد المرحلة الحالية
-    if session not in conversation_state or "f(x)" in user_text:
-        conversation_state[session] = 'analyse'
-        return respond("Commençons par analyser cette fonction étape par étape.\nQuel est l'expression à l'intérieur de la racine carrée ?")
+        # استخراج المكونات المهمة
+        steps = []
+        if parsed_expr.has(sqrt):
+            for r in parsed_expr.atoms(sqrt):
+                condition = f"{r.args[0]} ≥ 0"
+                steps.append(("racine", condition))
+        if parsed_expr.has(log):
+            for r in parsed_expr.atoms(log):
+                condition = f"{r.args[0]} > 0"
+                steps.append(("log", condition))
+        denom = parsed_expr.as_numer_denom()[1]
+        if denom != 1:
+            steps.append(("denominateur", f"{denom} ≠ 0"))
 
+        if not steps:
+            return respond("La fonction est définie partout. Le domaine est ℝ.")
 
-    step = conversation_state[session]
+        session_states[session] = {
+            "expr": expr,
+            "steps": steps,
+            "current": 0
+        }
+        return respond(f"Commençons l'analyse de f(x) = {expr}.\nPremière question : Que doit-on vérifier pour que {steps[0][1].split()[0]} soit valide ?")
 
-    # === Étape 1: début ===
-    if step == 'analyse':
-        conversation_state[session] = 'racine'
-        return respond("Commençons par analyser cette fonction étape par étape.\nQuel est l'expression à l'intérieur de la racine carrée ?")
+    # مرحلة الحوار التفاعلي
+    state = session_states[session]
+    current_step = state["steps"][state["current"]]
+    state["current"] += 1
 
-    # === Étape 2: réponse sur le contenu de la racine ===
-    elif step == 'racine':
-        if "x - 2" in user_text or "x-2" in user_text or "x moins 2" in user_text:
-            conversation_state[session] = 'condition_racine'
-            return respond("Parfait ! Et quelle condition doit remplir une racine carrée pour que l'expression soit définie ?")
-        else:
-            return respond("Réessaie. Quelle est l'expression exacte sous la racine ?")
+    # إذا انتهت كل الشروط
+    if state["current"] >= len(state["steps"]):
+        session_states.pop(session)
+        return respond("Très bien ! On a fini l'analyse. Tu peux maintenant proposer une autre fonction si tu veux.")
 
-    # === Étape 3: condition de la racine carrée ===
-    elif step == 'condition_racine':
-        motifs = ['plus grand', 'supérieur', 'x >', 'x ≥', 'x >=', 'x supérieur à']
-        if any(m in text_str for m in motifs) or '≥' in user_text or '>=' in user_text:
-            conversation_state[session] = 'denominateur'
-            return respond("Très bien, donc x ≥ 2.\nMaintenant, cette racine est dans un dénominateur. Qu'est-ce qu'on doit éviter ?")
-        else:
-            return respond("Essaie d'exprimer la condition pour que la racine carrée soit définie.")
+    # سؤال المرحلة التالية
+    next_step = state["steps"][state["current"]]
+    return respond(f"Parfait. Ensuite : Que doit-on vérifier pour que {next_step[1].split()[0]} soit valide ?")
 
-    # === Étape 4: condition du dénominateur ===
-    elif step == 'denominateur':
-        if '≠' in user_text or 'différent de' in user_text or 'x ≠ 2' in user_text or 'pas égal' in user_text:
-            conversation_state[session] = 'conclusion'
-            return respond("Exactement ! Alors, quelle est l'ensemble des valeurs de x qui vérifient toutes ces conditions ?")
-        else:
-            return respond("On cherche à éviter que le dénominateur soit nul. Que doit-on faire ?")
-
-    # === Étape 5: conclusion finale ===
-    elif step == 'conclusion':
-        if ']2, +∞[' in user_text or 'x > 2' in user_text or 'supérieur à 2' in text_str:
-            conversation_state.pop(session)
-            return respond("Parfait ! Le domaine de définition de f est D = ]2, +∞[\nSouhaites-tu essayer une autre fonction ?")
-        else:
-            return respond("Essaie d'exprimer le domaine de définition avec une bonne notation.")
-
-    return respond("Je n'ai pas compris. Peux-tu reformuler ?")
+def extract_expression(text):
+    match = re.search(r"f\(x\)\s*=\s*(.*)", text)
+    return match.group(1) if match else None
 
 def respond(text):
-    return jsonify({'fulfillmentText': text})
+    return jsonify({"fulfillmentText": text})
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
