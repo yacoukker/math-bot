@@ -1,11 +1,11 @@
 from flask import Flask, request, jsonify
-from sympy import symbols, sympify, sqrt, log
+from sympy import symbols, sympify, log
 import re, os
 
 app = Flask(__name__)
 x = symbols('x')
 
-# تتبع حالة كل session حسب نوع المكون والمرحلة
+# تتبع الحالة لكل session
 session_state = {}
 
 @app.route('/webhook', methods=['POST'])
@@ -15,28 +15,25 @@ def webhook():
     session_id = req.get('session', 'default')
     user_text = user_input.strip().lower()
 
-    # مرحلة البداية: التقاط الدالة وتحليلها
     if session_id not in session_state:
         expr_str = extract_expr(user_text)
         if not expr_str:
             return respond("Merci d’écrire la fonction sous la forme : f(x) = ...")
+
         try:
             expr = sympify(expr_str)
-            print(expr)
         except:
             return respond("Je n’ai pas pu comprendre la fonction. Essaie encore.")
 
         steps = []
 
-        # جذور مربعة
-        for r in expr.atoms(sqrt):
-            arg = str(r.args[0])
-            steps.append(("racine", arg))
+        # الجذور: نبحث عن sqrt(...) و√(...) يدويًا
+        sqrt_matches = re.findall(r'sqrt\((.*?)\)', expr_str)
+        steps += [("racine", arg.strip()) for arg in sqrt_matches]
 
-        # لوغاريتمات
-        for l in expr.atoms(log):
-            arg = str(l.args[0])
-            steps.append(("log", arg))
+        # اللوغاريتمات
+        log_matches = re.findall(r'log\((.*?)\)', expr_str)
+        steps += [("log", arg.strip()) for arg in log_matches]
 
         # المقام
         denom = expr.as_numer_denom()[1]
@@ -55,12 +52,11 @@ def webhook():
         type_, arg = steps[0]
         return respond(first_question(type_, arg))
 
-    # متابعة السيناريو
+    # مواصلة السيناريو
     state = session_state[session_id]
     current = state["current"]
     steps = state["steps"]
 
-    # انتظار إجابة التلميذ
     if current < len(steps):
         type_, arg = steps[current]
         response = feedback_for(type_, arg, user_text)
@@ -79,7 +75,13 @@ def webhook():
 
 def extract_expr(text):
     match = re.search(r"f\(x\)\s*=\s*(.+)", text)
-    return match.group(1) if match else None
+    if not match:
+        return None
+    expr_raw = match.group(1)
+
+    # تعويض √(...) بـ sqrt(...)
+    expr_fixed = re.sub(r"√\s*\((.*?)\)", r"sqrt(\1)", expr_raw)
+    return expr_fixed
 
 def first_question(type_, arg):
     if type_ == "racine":
