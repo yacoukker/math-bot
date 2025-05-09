@@ -33,16 +33,15 @@ def webhook():
         current_type, arg = components[0]
         return respond(f"Commençons. Quelle est la condition sur {component_label(current_type)} {arg} pour qu’il soit défini ?")
 
-    # Suite du scénario
     state = session_state[session_id]
 
     if state.get("attente_finale"):
-        correct = is_domain_correct_math(user_input, state["conditions"])
+        correct, bonne_reponse = is_domain_correct_math(user_input, state["conditions"])
         session_state.pop(session_id)
         if correct:
             return respond("Bravo ! Tu as correctement trouvé l'ensemble de définition.")
         else:
-            return respond("La bonne réponse est l’intersection des conditions obtenues. Ce n’est pas grave, tu peux réessayer une autre fois !")
+            return respond(f"Ce n’est pas tout à fait correct. L’ensemble de définition est : D = {bonne_reponse}\nNe t’inquiète pas, tu peux y arriver avec un peu de pratique !")
 
     current_type, arg = state["steps"][state["current"]]
     condition = expected_condition(current_type, arg)
@@ -65,7 +64,6 @@ def webhook():
             state["conditions"].append(solution)
             return next_step(state, session_id, f"Ce n’est pas tout à fait ça. En réalité, la solution est : {solution}")
 
-# Étapes suivantes
 def next_step(state, session_id, message):
     state["current"] += 1
     state["mode"] = "condition"
@@ -79,7 +77,7 @@ def next_step(state, session_id, message):
         return respond(message + "\n\nVoici les conditions obtenues :\n- " + "\n- ".join(conds) +
                        "\nPeux-tu en déduire maintenant l’ensemble de définition D ?")
 
-# Fonctions auxiliaires
+# Utilitaires
 
 def extract_expr(text):
     match = re.search(r"f\(x\)\s*=\s*(.+)", text)
@@ -152,7 +150,7 @@ def match_solution(reply, attendu):
     reply = reply.replace(" ", "").replace(">=", "≥").replace("!=", "≠")
     return attendu.replace(" ", "") in reply
 
-# Vérification mathématique de D
+# Vérification finale
 
 def condition_to_set(condition_str):
     if "≥" in condition_str:
@@ -185,9 +183,8 @@ def is_domain_correct_math(reply, conditions):
     correct_domain = sets[0]
     for s in sets[1:]:
         correct_domain = correct_domain.intersect(s)
-
     student_set = parse_student_domain(reply)
-    return student_set == correct_domain
+    return student_set == correct_domain, str(correct_domain)
 
 def respond(text):
     return jsonify({"fulfillmentText": text})
