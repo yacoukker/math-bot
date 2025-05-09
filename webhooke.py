@@ -1,8 +1,9 @@
 from flask import Flask, request, jsonify
+from sympy import symbols, Interval, Union, S
 import re, os
 
 app = Flask(__name__)
-x = 'x'
+x = symbols('x')
 session_state = {}
 
 @app.route('/webhook', methods=['POST'])
@@ -32,11 +33,16 @@ def webhook():
         current_type, arg = components[0]
         return respond(start_condition(current_type, arg))
 
-    # Suite du scénario
+    # suite du scénario
     state = session_state[session_id]
 
     if state.get("attente_finale"):
-        return respond(handle_domain_answer(user_input, state, session_id))
+        correct = is_domain_correct_math(user_input, state["conditions"])
+        session_state.pop(session_id)
+        if correct:
+            return respond("Bravo ! Tu as correctement trouvé l'ensemble de définition.")
+        else:
+            return respond("La bonne réponse est l’intersection des conditions obtenues. Pas de souci, tu y arriveras la prochaine fois !")
 
     current_type, arg = state["steps"][state["current"]]
     attendu = expected_condition(current_type, arg)
@@ -58,6 +64,8 @@ def webhook():
             state["conditions"].append(solution)
             return next_step(state, session_id, f"Ce n’est pas tout à fait ça. En fait, la solution est : {solution}")
 
+# ===== étapes suivantes =====
+
 def next_step(state, session_id, message):
     state["current"] += 1
     state["mode"] = "condition"
@@ -66,20 +74,12 @@ def next_step(state, session_id, message):
         next_type, next_arg = state["steps"][state["current"]]
         return respond(message + f"\n\nPassons à {label_component(next_type)}. Quelle est la condition pour que {describe(next_type, next_arg)} soit défini ?")
     else:
-        conds = state["conditions"]
         state["attente_finale"] = True
+        conds = state["conditions"]
         return respond(message + "\n\nVoici les conditions obtenues :\n- " + "\n- ".join(conds) +
-                       "\nPeux-tu en déduire l’ensemble de définition D ?")
+                       "\nPeux-tu en déduire maintenant l’ensemble de définition D ?")
 
-def handle_domain_answer(user_input, state, session_id):
-    if is_domain_correct(user_input, state["conditions"]):
-        session_state.pop(session_id)
-        return "Bravo ! Tu as correctement trouvé l'ensemble de définition."
-    else:
-        session_state.pop(session_id)
-        return "La bonne réponse est l’intersection des conditions obtenues. Ne t’en fais pas, essaie encore une autre fois — tu es sur la bonne voie !"
-
-# ==== outils ====
+# ===== outils analyse =====
 
 def extract_expr(text):
     match = re.search(r"f\(x\)\s*=\s*(.+)", text)
@@ -146,9 +146,44 @@ def match_solution(reply, attendu):
     reply = reply.replace(" ", "").replace(">=", "≥").replace("!=", "≠")
     return attendu.replace(" ", "") in reply
 
-def is_domain_correct(reply, conditions):
-    reply = reply.replace(" ", "").replace("]","").replace("[","")
-    return all(cond.split()[0] in reply for cond in conditions)
+# ===== vérification mathématique de D =====
+
+def condition_to_set(condition_str):
+    if "≥" in condition_str:
+        val = int(condition_str.split("≥")[1].strip())
+        return Interval(val, S.Infinity)
+    elif ">" in condition_str:
+        val = int(condition_str.split(">")[1].strip())
+        return Interval.open(val, S.Infinity)
+    elif "≠" in condition_str:
+        val = int(condition_str.split("≠")[1].strip())
+        return Union(Interval.open(-S.Infinity, val), Interval.open(val, S.Infinity))
+    return S.Reals
+
+def parse_student_domain(reply):
+    reply = reply.replace(" ", "").replace("[", "").replace("]", "")
+    reply = reply.replace("∞", "oo").replace("+oo", "oo")
+    try:
+        if "," in reply:
+            parts = reply.split(",")
+            a = float(parts[0])
+            b = float(parts[1])
+            return Interval.open(a, b)
+        elif "r" in reply or "ℝ" in reply:
+            return S.Reals
+    except:
+        return None
+
+def is_domain_correct_math(reply, conditions):
+    sets = [condition_to_set(cond) for cond in conditions]
+    correct_domain = sets[0]
+    for s in sets[1:]:
+        correct_domain = correct_domain.intersect(s)
+
+    student_set = parse_student_domain(reply)
+    return student_set == correct_domain
+
+# ===== réponse finale =====
 
 def respond(text):
     return jsonify({"fulfillmentText": text})
