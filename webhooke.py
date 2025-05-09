@@ -77,7 +77,7 @@ def next_step(state, session_id, message):
         return respond(message + "\n\nVoici les conditions obtenues :\n- " + "\n- ".join(conds) +
                        "\nPeux-tu en déduire maintenant l’ensemble de définition D ?")
 
-# Utilitaires
+# Outils
 
 def extract_expr(text):
     match = re.search(r"f\(x\)\s*=\s*(.+)", text)
@@ -150,8 +150,6 @@ def match_solution(reply, attendu):
     reply = reply.replace(" ", "").replace(">=", "≥").replace("!=", "≠")
     return attendu.replace(" ", "") in reply
 
-# Vérification finale
-
 def condition_to_set(condition_str):
     if "≥" in condition_str:
         val = int(condition_str.split("≥")[1].strip())
@@ -165,14 +163,13 @@ def condition_to_set(condition_str):
     return S.Reals
 
 def parse_student_domain(reply):
-    reply = reply.replace(" ", "").replace("[", "").replace("]", "")
-    reply = reply.replace("∞", "oo").replace("+oo", "oo")
     try:
-        if "," in reply:
-            parts = reply.split(",")
-            a = float(parts[0])
-            b = float(parts[1])
-            return Interval.open(a, b)
+        reply = reply.replace(" ", "").replace("[", "").replace("]", "")
+        reply = reply.replace("∞", "oo").replace("+oo", "oo").replace("−", "-").replace("]", "").replace("[", "")
+        match = re.match(r"\]?(-?\d+),\+?oo\[?", reply)
+        if match:
+            a = float(match.group(1))
+            return Interval.open(a, S.Infinity)
         elif "r" in reply or "ℝ" in reply:
             return S.Reals
     except:
@@ -183,8 +180,19 @@ def is_domain_correct_math(reply, conditions):
     correct_domain = sets[0]
     for s in sets[1:]:
         correct_domain = correct_domain.intersect(s)
+
     student_set = parse_student_domain(reply)
-    return student_set == correct_domain, str(correct_domain)
+    correct_str = convert_to_notation(correct_domain)
+    return student_set == correct_domain, correct_str
+
+def convert_to_notation(interval):
+    if isinstance(interval, Interval):
+        a = interval.start
+        b = interval.end
+        left = "]" if interval.left_open else "["
+        right = "[" if interval.right_open else "["
+        return f"{left}{a}, +∞["
+    return "ℝ"
 
 def respond(text):
     return jsonify({"fulfillmentText": text})
