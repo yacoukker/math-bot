@@ -31,9 +31,9 @@ def webhook():
         }
 
         current_type, arg = components[0]
-        return respond(start_condition(current_type, arg))
+        return respond(f"Commençons. Quelle est la condition sur {component_label(current_type)} {arg} pour qu’il soit défini ?")
 
-    # suite du scénario
+    # Suite du scénario
     state = session_state[session_id]
 
     if state.get("attente_finale"):
@@ -42,44 +42,44 @@ def webhook():
         if correct:
             return respond("Bravo ! Tu as correctement trouvé l'ensemble de définition.")
         else:
-            return respond("La bonne réponse est l’intersection des conditions obtenues. Pas de souci, tu y arriveras la prochaine fois !")
+            return respond("La bonne réponse est l’intersection des conditions obtenues. Ce n’est pas grave, tu peux réessayer une autre fois !")
 
     current_type, arg = state["steps"][state["current"]]
-    attendu = expected_condition(current_type, arg)
+    condition = expected_condition(current_type, arg)
     solution = expected_solution(current_type, arg)
 
     if state["mode"] == "condition":
         if match_condition(user_input, current_type, arg):
             state["mode"] = "solution"
-            return respond(f"Très bien ! Résous maintenant cette condition : {attendu}")
+            return respond(f"Parfait ! Résous maintenant cette inéquation : {condition}")
         else:
             state["mode"] = "solution"
-            return respond(f"Pas grave. Pour que {label_component(current_type)} soit défini, on doit avoir : {attendu}.\nPeux-tu le résoudre ?")
+            explication = error_explanation(current_type, arg, condition)
+            return respond(f"{explication}\nPeux-tu résoudre maintenant cette inéquation : {condition} ?")
 
     elif state["mode"] == "solution":
         if match_solution(user_input, solution):
             state["conditions"].append(solution)
-            return next_step(state, session_id, "Excellent, bonne réponse !")
+            return next_step(state, session_id, "Bien joué !")
         else:
             state["conditions"].append(solution)
-            return next_step(state, session_id, f"Ce n’est pas tout à fait ça. En fait, la solution est : {solution}")
+            return next_step(state, session_id, f"Ce n’est pas tout à fait ça. En réalité, la solution est : {solution}")
 
-# ===== étapes suivantes =====
-
+# Étapes suivantes
 def next_step(state, session_id, message):
     state["current"] += 1
     state["mode"] = "condition"
 
     if state["current"] < len(state["steps"]):
         next_type, next_arg = state["steps"][state["current"]]
-        return respond(message + f"\n\nPassons à {label_component(next_type)}. Quelle est la condition pour que {describe(next_type, next_arg)} soit défini ?")
+        return respond(message + f"\n\nPassons à {component_label(next_type)}. Quelle est la condition sur {next_arg} pour qu’il soit défini ?")
     else:
         state["attente_finale"] = True
         conds = state["conditions"]
         return respond(message + "\n\nVoici les conditions obtenues :\n- " + "\n- ".join(conds) +
                        "\nPeux-tu en déduire maintenant l’ensemble de définition D ?")
 
-# ===== outils analyse =====
+# Fonctions auxiliaires
 
 def extract_expr(text):
     match = re.search(r"f\(x\)\s*=\s*(.+)", text)
@@ -97,15 +97,12 @@ def analyse_expression(expr):
         components.append(("denominateur", denom.strip()))
     return components
 
-def label_component(type_):
+def component_label(type_):
     return {
-        "racine": "la racine carrée",
-        "log": "le logarithme",
+        "racine": "√",
+        "log": "log",
         "denominateur": "le dénominateur"
-    }.get(type_, "ce composant")
-
-def describe(type_, arg):
-    return arg
+    }.get(type_, "cette expression")
 
 def expected_condition(type_, arg):
     if type_ == "racine":
@@ -133,12 +130,21 @@ def solve_for_x(expr):
         return str(int(expr[2:]))
     return "?"
 
+def error_explanation(type_, arg, condition):
+    if type_ == "racine":
+        return f"Pas de souci. Pour que la racine carrée soit définie, ce qui est à l’intérieur doit être positif ou nul, donc ici {condition}."
+    elif type_ == "log":
+        return f"Aucun problème. Pour que le logarithme soit défini, l’argument doit être strictement positif, donc ici {condition}."
+    elif type_ == "denominateur":
+        return f"Très bien. Le dénominateur ne doit jamais être nul. On a donc {condition}."
+    return f"Voici la condition correcte : {condition}"
+
 def match_condition(reply, type_, arg):
     reply = reply.replace(" ", "").replace(">=", "≥").replace("!=", "≠")
     patterns = {
-        "racine": ["≥0", "positif", "nonnégatif"],
-        "log": [">0", "strictementpositif"],
-        "denominateur": ["≠0", "différent", "nonnul"]
+        "racine": ["≥0", "positif", "nonnégatif", f"{arg}≥0"],
+        "log": [">0", "strictementpositif", f"{arg}>0"],
+        "denominateur": ["≠0", "différent", "nonnul", f"{arg}≠0"]
     }
     return any(p in reply for p in patterns.get(type_, []))
 
@@ -146,7 +152,7 @@ def match_solution(reply, attendu):
     reply = reply.replace(" ", "").replace(">=", "≥").replace("!=", "≠")
     return attendu.replace(" ", "") in reply
 
-# ===== vérification mathématique de D =====
+# Vérification mathématique de D
 
 def condition_to_set(condition_str):
     if "≥" in condition_str:
@@ -182,8 +188,6 @@ def is_domain_correct_math(reply, conditions):
 
     student_set = parse_student_domain(reply)
     return student_set == correct_domain
-
-# ===== réponse finale =====
 
 def respond(text):
     return jsonify({"fulfillmentText": text})
