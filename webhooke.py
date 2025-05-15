@@ -78,7 +78,7 @@ def next_step(state, session_id, message):
         return respond(message + "\n\nVoici les conditions obtenues sur x :\n" + conditions_text +
                        "\nPeux-tu en déduire maintenant l’ensemble de définition D ?")
 
-# ===== outils =====
+# ==== outils ====
 
 def extract_expr(text):
     match = re.search(r"f\(x\)\s*=\s*(.+)", text)
@@ -123,10 +123,16 @@ def expected_solution(type_, arg):
 
 def solve_for_x(expr):
     expr = expr.replace(" ", "")
-    match = re.match(r"x([\+\-])(\d+)", expr)
-    if match:
-        sign, number = match.groups()
-        return str(-int(number)) if sign == '+' else str(int(number))
+    if expr.startswith("x+"):
+        try:
+            return str(-int(expr[2:]))
+        except:
+            return "?"
+    elif expr.startswith("x-"):
+        try:
+            return str(int(expr[2:]))
+        except:
+            return "?"
     return "?"
 
 def error_explanation(type_, arg, condition):
@@ -166,7 +172,7 @@ def condition_to_set(condition_str):
 def parse_student_domain(reply):
     try:
         reply = reply.replace(" ", "").replace("[", "").replace("]", "")
-        reply = reply.replace("∞", "oo").replace("+oo", "oo").replace("−", "-")
+        reply = reply.replace("∞", "oo").replace("+oo", "oo").replace("−", "-").replace("]", "").replace("[", "")
         match = re.match(r"\]?(-?\d+),\+?oo\[?", reply)
         if match:
             a = float(match.group(1))
@@ -181,6 +187,7 @@ def is_domain_correct_math(reply, conditions):
     correct_domain = sets[0]
     for s in sets[1:]:
         correct_domain = correct_domain.intersect(s)
+
     student_set = parse_student_domain(reply)
     correct_str = convert_to_notation(correct_domain)
     return student_set == correct_domain, correct_str
