@@ -199,14 +199,16 @@ def is_domain_correct_math(reply, conditions):
 
 def convert_to_notation(interval):
     if isinstance(interval, Interval):
-        a = interval.start
+        a = "-∞" if interval.start == S.NegativeInfinity else str(interval.start)
+        b = "+∞" if interval.end == S.Infinity else str(interval.end)
         left = "]" if interval.left_open else "["
-        return f"{left}{a}, +∞["
+        right = "[" if interval.right_open == False else "["
+        return f"{left}{a}, {b}{right}"
+
     elif isinstance(interval, Union):
         parts = [convert_to_notation(i) for i in interval.args]
         return " ∪ ".join(parts)
     return "ℝ"
-
 
 def respond(text):
     return jsonify({"fulfillmentText": text})
