@@ -123,6 +123,7 @@ def expected_solution(type_, arg):
 
 def solve_for_x(expr):
     expr = expr.replace(" ", "")
+    expr = expr.strip("()")  # إزالة الأقواس إذا وُجدت
     match = re.match(r"x([\+\-])(\d+)", expr)
     if match:
         sign, number = match.groups()
