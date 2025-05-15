@@ -123,16 +123,10 @@ def expected_solution(type_, arg):
 
 def solve_for_x(expr):
     expr = expr.replace(" ", "")
-    if expr.startswith("x+"):
-        try:
-            return str(-int(expr[2:]))
-        except:
-            return "?"
-    elif expr.startswith("x-"):
-        try:
-            return str(int(expr[2:]))
-        except:
-            return "?"
+    match = re.match(r"x([\+\-])(\d+)", expr)
+    if match:
+        sign, number = match.groups()
+        return str(-int(number)) if sign == '+' else str(int(number))
     return "?"
 
 def error_explanation(type_, arg, condition):
@@ -158,21 +152,28 @@ def match_solution(reply, attendu):
     return attendu.replace(" ", "") in reply
 
 def condition_to_set(condition_str):
-    if "≥" in condition_str:
-        val = int(condition_str.split("≥")[1].strip())
-        return Interval(val, S.Infinity)
-    elif ">" in condition_str:
-        val = int(condition_str.split(">")[1].strip())
-        return Interval.open(val, S.Infinity)
-    elif "≠" in condition_str:
-        val = int(condition_str.split("≠")[1].strip())
-        return Union(Interval.open(-S.Infinity, val), Interval.open(val, S.Infinity))
+    if "?" in condition_str:
+        return S.Reals  # تجاهل الشروط غير المفهومة
+
+    try:
+        if "≥" in condition_str:
+            val = int(condition_str.split("≥")[1].strip())
+            return Interval(val, S.Infinity)
+        elif ">" in condition_str:
+            val = int(condition_str.split(">")[1].strip())
+            return Interval.open(val, S.Infinity)
+        elif "≠" in condition_str:
+            val = int(condition_str.split("≠")[1].strip())
+            return Union(Interval.open(-S.Infinity, val), Interval.open(val, S.Infinity))
+    except:
+        return S.Reals
+
     return S.Reals
 
 def parse_student_domain(reply):
     try:
         reply = reply.replace(" ", "").replace("[", "").replace("]", "")
-        reply = reply.replace("∞", "oo").replace("+oo", "oo").replace("−", "-").replace("]", "").replace("[", "")
+        reply = reply.replace("∞", "oo").replace("+oo", "oo").replace("−", "-")
         match = re.match(r"\]?(-?\d+),\+?oo\[?", reply)
         if match:
             a = float(match.group(1))
@@ -187,7 +188,6 @@ def is_domain_correct_math(reply, conditions):
     correct_domain = sets[0]
     for s in sets[1:]:
         correct_domain = correct_domain.intersect(s)
-
     student_set = parse_student_domain(reply)
     correct_str = convert_to_notation(correct_domain)
     return student_set == correct_domain, correct_str
