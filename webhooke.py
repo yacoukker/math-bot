@@ -180,13 +180,13 @@ def parse_student_domain(reply):
         reply = reply.lower().replace(" ", "")
         reply = reply.replace("∞", "oo").replace("+oo", "oo").replace("−", "-")
 
-        # ]a,+oo[ ou [a,+oo[
-        match = re.match(r"[\[\]()\]]?(-?\d+),\+?oo[\[\]()\]]?", reply)
+        # [-2,+oo[ ou ]-2,+oo[ ou [ -2 , +oo [
+        match = re.match(r"[\[\]()\]]?(-?\d+)[;,]?(\+?oo)[\[\]()\]]?", reply)
         if match:
             a = float(match.group(1))
-            return Interval.open(a, S.Infinity)
+            return Interval(float(a), S.Infinity, left_open=reply.startswith("]") or reply.startswith("("))
 
-        # union deux intervalles : ]-oo,a[ ∪ ]a,+oo[
+        # union de deux intervalles : ]-oo,a[ ∪ ]a,+oo[
         match_union = re.findall(r"-?oo,(-?\d+)", reply)
         match_union2 = re.findall(r"(-?\d+),\+?oo", reply)
         if len(match_union) == 1 and len(match_union2) == 2:
@@ -196,6 +196,7 @@ def parse_student_domain(reply):
         # ℝ ou reel
         if "r" in reply or "reel" in reply:
             return S.Reals
+
     except:
         return None
     return None
