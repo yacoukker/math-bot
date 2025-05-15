@@ -37,15 +37,15 @@ def webhook():
 
     if state.get("attente_finale"):
     # لا نقارن إلا إذا كانت الإجابة تحتوي رموز مجال
-    if any(token in user_input for token in ["[", "]", "(", ")", "oo", "∞", "x", "≥", ">", "reel", "r"]):
-        correct, bonne_reponse = is_domain_correct_math(user_input, state["conditions"])
-        session_state.pop(session_id)
-        if correct:
-            return respond("Bravo ! Tu as correctement trouvé l'ensemble de définition.")
+        if any(token in user_input for token in ["[", "]", "(", ")", "oo", "∞", "x", "≥", ">", "reel", "r"]):
+            correct, bonne_reponse = is_domain_correct_math(user_input, state["conditions"])
+            session_state.pop(session_id)
+            if correct:
+                return respond("Bravo ! Tu as correctement trouvé l'ensemble de définition.")
+            else:
+                return respond(f"Ce n’est pas tout à fait correct. L’ensemble de définition est : D = {bonne_reponse}\nNe t’inquiète pas, tu peux y arriver avec un peu de pratique !")
         else:
-            return respond(f"Ce n’est pas tout à fait correct. L’ensemble de définition est : D = {bonne_reponse}\nNe t’inquiète pas, tu peux y arriver avec un peu de pratique !")
-    else:
-        return respond("Essaie de donner l’ensemble sous forme d’un intervalle, par exemple : ]2,+∞[ ou ℝ.")
+            return respond("Essaie de donner l’ensemble sous forme d’un intervalle, par exemple : ]2,+∞[ ou ℝ.")
 
     current_type, arg = state["steps"][state["current"]]
     condition = expected_condition(current_type, arg)
