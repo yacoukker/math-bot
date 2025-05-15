@@ -36,12 +36,16 @@ def webhook():
     state = session_state[session_id]
 
     if state.get("attente_finale"):
+    # لا نقارن إلا إذا كانت الإجابة تحتوي رموز مجال
+    if any(token in user_input for token in ["[", "]", "(", ")", "oo", "∞", "x", "≥", ">", "reel", "r"]):
         correct, bonne_reponse = is_domain_correct_math(user_input, state["conditions"])
         session_state.pop(session_id)
         if correct:
             return respond("Bravo ! Tu as correctement trouvé l'ensemble de définition.")
         else:
             return respond(f"Ce n’est pas tout à fait correct. L’ensemble de définition est : D = {bonne_reponse}\nNe t’inquiète pas, tu peux y arriver avec un peu de pratique !")
+    else:
+        return respond("Essaie de donner l’ensemble sous forme d’un intervalle, par exemple : ]2,+∞[ ou ℝ.")
 
     current_type, arg = state["steps"][state["current"]]
     condition = expected_condition(current_type, arg)
@@ -173,16 +177,30 @@ def condition_to_set(condition_str):
 
 def parse_student_domain(reply):
     try:
-        reply = reply.replace(" ", "").replace("[", "").replace("]", "")
+        reply = reply.lower().replace(" ", "")
         reply = reply.replace("∞", "oo").replace("+oo", "oo").replace("−", "-")
-        match = re.match(r"\]?(-?\d+),\+?oo\[?", reply)
+
+        # Reconnaître un simple intervalle ]a,+∞[
+        match = re.match(r"[\[\]]?(-?\d+),\+?oo[\[\]]?", reply)
         if match:
             a = float(match.group(1))
             return Interval.open(a, S.Infinity)
-        elif "r" in reply or "ℝ" in reply:
+
+        # Union de deux intervalles pour x ≠ a
+        match_union = re.findall(r"\]?(-?\d+),\s*\+?oo\[?", reply)
+        if len(match_union) == 2:
+            a1 = float(match_union[0])
+            a2 = float(match_union[1])
+            return Union(Interval.open(-S.Infinity, a1), Interval.open(a2, S.Infinity))
+
+        # ℝ
+        if "r" in reply or "ℝ" in reply or "reel" in reply:
             return S.Reals
+
     except:
         return None
+    return None
+
 
 def is_domain_correct_math(reply, conditions):
     sets = [condition_to_set(cond) for cond in conditions if "?" not in cond]
