@@ -180,26 +180,26 @@ def parse_student_domain(reply):
         reply = reply.lower().replace(" ", "")
         reply = reply.replace("∞", "oo").replace("+oo", "oo").replace("−", "-")
 
-        # Reconnaître un simple intervalle ]a,+∞[
-        match = re.match(r"[\[\]]?(-?\d+),\+?oo[\[\]]?", reply)
+        # ]a,+oo[ ou [a,+oo[
+        match = re.match(r"[\[\]()\]]?(-?\d+),\+?oo[\[\]()\]]?", reply)
         if match:
             a = float(match.group(1))
             return Interval.open(a, S.Infinity)
 
-        # Union de deux intervalles pour x ≠ a
-        match_union = re.findall(r"\]?(-?\d+),\s*\+?oo\[?", reply)
-        if len(match_union) == 2:
-            a1 = float(match_union[0])
-            a2 = float(match_union[1])
-            return Union(Interval.open(-S.Infinity, a1), Interval.open(a2, S.Infinity))
+        # union deux intervalles : ]-oo,a[ ∪ ]a,+oo[
+        match_union = re.findall(r"-?oo,(-?\d+)", reply)
+        match_union2 = re.findall(r"(-?\d+),\+?oo", reply)
+        if len(match_union) == 1 and len(match_union2) == 2:
+            a = float(match_union[0])
+            return Union(Interval.open(-S.Infinity, a), Interval.open(a, S.Infinity))
 
-        # ℝ
-        if "r" in reply or "ℝ" in reply or "reel" in reply:
+        # ℝ ou reel
+        if "r" in reply or "reel" in reply:
             return S.Reals
-
     except:
         return None
     return None
+
 
 
 def is_domain_correct_math(reply, conditions):
