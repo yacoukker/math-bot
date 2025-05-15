@@ -185,10 +185,14 @@ def parse_student_domain(reply):
         return None
 
 def is_domain_correct_math(reply, conditions):
-    sets = [condition_to_set(cond) for cond in conditions]
+    sets = [condition_to_set(cond) for cond in conditions if "?" not in cond]
+    if not sets:
+        return False, "ℝ"
+
     correct_domain = sets[0]
     for s in sets[1:]:
         correct_domain = correct_domain.intersect(s)
+
     student_set = parse_student_domain(reply)
     correct_str = convert_to_notation(correct_domain)
     return student_set == correct_domain, correct_str
@@ -198,7 +202,11 @@ def convert_to_notation(interval):
         a = interval.start
         left = "]" if interval.left_open else "["
         return f"{left}{a}, +∞["
+    elif isinstance(interval, Union):
+        parts = [convert_to_notation(i) for i in interval.args]
+        return " ∪ ".join(parts)
     return "ℝ"
+
 
 def respond(text):
     return jsonify({"fulfillmentText": text})
