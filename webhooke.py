@@ -1,5 +1,5 @@
 from flask import Flask, request, jsonify
-from sympy import symbols, Interval, Union, S, simplify
+from sympy import symbols, Interval, Union, S, simplify, Eq
 import re, os
 
 app = Flask(__name__)
@@ -218,9 +218,12 @@ def is_domain_correct_math(reply, conditions):
     if student_set is None:
         return False, correct_str
 
-    # ✅ استعمال المقارنة الدقيقة والمبسطة
-    if simplify(student_set - correct_domain).is_EmptySet and simplify(correct_domain - student_set).is_EmptySet:
-        return True, correct_str
+    # ✅ مقارنة رياضية دقيقة باستخدام SymPy
+    try:
+        if student_set == correct_domain or Eq(student_set, correct_domain):
+            return True, correct_str
+    except:
+        pass
 
     return False, correct_str
 
