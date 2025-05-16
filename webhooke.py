@@ -179,7 +179,8 @@ def parse_student_domain(reply):
     try:
         reply = reply.lower().replace(" ", "")
         reply = reply.replace("∞", "oo").replace("+oo", "oo").replace("−", "-")
-
+        # Enlever "d=" s'il existe
+        reply = reply.replace("d=", "")
         # [-2,+oo[ ou ]-2,+oo[ ou [ -2 , +oo [
         match = re.match(r"[\[\]()\]]?(-?\d+)[;,]?(\+?oo)[\[\]()\]]?", reply)
         if match:
