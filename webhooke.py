@@ -214,7 +214,7 @@ def is_domain_correct_math(reply, conditions):
 
     student_set = parse_student_domain(reply)
     correct_str = convert_to_notation(correct_domain)
-    if student_set is not None and student_set.equals(correct_domain):
+    if student_set is not None and student_set == correct_domain:
         return True, correct_str
     else:
         return False, correct_str
