@@ -14,7 +14,12 @@ def webhook():
     # ✅ Réinitialiser la session si une nouvelle fonction est introduite
     if "f(x)=" in user_input:
         session_state.pop(session_id, None)
-        
+
+    # ✅ Bloc /reset → réinitialise la session et répond avec un message
+    if "reset" in user_input and len(user_input) <= 20:
+        session_state.pop(session_id, None)
+        return respond("Très bien ! Reprenons depuis le début. Envoie-moi une nouvelle fonction sous la forme : f(x) = ...")
+
     if session_id not in session_state:
         expr = extract_expr(user_input)
         if not expr:
