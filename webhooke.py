@@ -11,21 +11,10 @@ def webhook():
     req = request.get_json()
     user_input = req.get('queryResult', {}).get('queryText', '').strip().lower()
     session_id = req.get('session', 'default')
-    # ✅ Si l'utilisateur écrit /start → on réinitialise la session
-    if "start" in user_input and len(user_input) <= 20:
+    # ✅ Réinitialiser la session si une nouvelle fonction est introduite
+    if "f(x)=" in user_input:
         session_state.pop(session_id, None)
-        return respond(
-            "Bonjour ! Je suis Assistant_Df, ton compagnon pour explorer les domaines de définition des fonctions.\n\n"
-            "Tu peux m’écrire une fonction comme :\n"
-            "f(x) = 1/(x - 2)\n\n"
-            "Je t’accompagnerai pas à pas pour en déterminer l’ensemble de définition.\n\n"
-            "Quelques conseils importants :\n"
-            "• Utilise `sqrt(...)` au lieu du symbole √.\n"
-            "• Pour “différent de”, écris `!=` (ex : x != 2).\n"
-            "• N’oublie pas les parenthèses, surtout dans les fractions et les racines.\n"
-            "• Écris la fonction sous la forme `f(x) = ...`\n\n"
-            "Alors, Envoie-moi ta fonction pour commencer !"
-        )
+        
     if session_id not in session_state:
         expr = extract_expr(user_input)
         if not expr:
