@@ -12,7 +12,7 @@ def webhook():
     user_input = req.get('queryResult', {}).get('queryText', '').strip().lower()
     session_id = req.get('session', 'default')
     # ✅ Si l'utilisateur écrit /start → on réinitialise la session
-    if user_input == "/start":
+    if "start" in user_input and len(user_input) <= 20:
         session_state.pop(session_id, None)
         return respond(
             "Bonjour ! Je suis Assistant_Df, ton compagnon pour explorer les domaines de définition des fonctions.\n\n"
