@@ -1,5 +1,5 @@
 from flask import Flask, request, jsonify
-from sympy import symbols, Interval, Union, S, simplify, Eq, solveset, sympify
+from sympy import symbols, Interval, Union, S, simplify, solveset, Eq
 import re, os
 
 app = Flask(__name__)
@@ -124,23 +124,31 @@ def expected_condition(type_, arg):
 
 def expected_solution(type_, arg):
     try:
-        expr = arg.replace("^", "**").strip()
-        sym_expr = sympify(expr)
-
-        if type_ == "racine":
-            sols = solveset(sym_expr >= 0, x, domain=S.Reals)
-        elif type_ == "log":
-            sols = solveset(sym_expr > 0, x, domain=S.Reals)
-        elif type_ == "denominateur":
-            sols = solveset(Eq(sym_expr, 0), x, domain=S.Reals)
-            return " et ".join([f"x ≠ {s}" for s in sols])
-
-        return str(sols)
+        domain = solveset(expected_condition_expr(type_, arg), x, domain=S.Reals)
+        return convert_to_notation(domain)
     except:
         return "?"
 
+def expected_condition_expr(type_, arg):
+    arg_expr = simplify(arg)
+    if type_ == "racine":
+        return arg_expr >= 0
+    elif type_ == "log":
+        return arg_expr > 0
+    elif type_ == "denominateur":
+        return Eq(arg_expr, 0) == False
+
+def error_explanation(type_, arg, condition):
+    if type_ == "racine":
+        return f"Pas de souci. Pour que la racine carrée soit définie, ce qui est à l’intérieur doit être positif ou nul, donc ici {condition}."
+    elif type_ == "log":
+        return f"Aucun problème. Pour que le logarithme soit défini, l’argument doit être strictement positif, donc ici {condition}."
+    elif type_ == "denominateur":
+        return f"Très bien. Le dénominateur ne doit jamais être nul. On a donc {condition}."
+    return f"Voici la condition correcte : {condition}"
+
 def match_condition(reply, type_, arg):
-    reply = reply.replace(" ", "").replace(">=", "≥").replace("<=", "≤").replace("!=", "≠").lower()
+    reply = reply.replace(" ", "").replace(">=", "≥").replace("!=", "≠")
     patterns = {
         "racine": ["≥0", "positif", "nonnégatif", f"{arg}≥0"],
         "log": [">0", "strictementpositif", f"{arg}>0"],
@@ -149,27 +157,18 @@ def match_condition(reply, type_, arg):
     return any(p in reply for p in patterns.get(type_, []))
 
 def match_solution(reply, attendu):
-    normalize = lambda s: s.replace(" ", "").replace(">=", "≥").replace("<=", "≤").replace("!=", "≠").lower()
-    reply_norm = normalize(reply)
-    attendu_norm = normalize(attendu)
-    if attendu_norm in reply_norm:
-        return True
-    reply_parts = set(re.split(r"[ouet]+", reply_norm))
-    attendu_parts = set(re.split(r"[ouet]+", attendu_norm))
-    return reply_parts == attendu_parts
+    return attendu.replace(" ", "") in reply.replace(" ", "")
 
 def condition_to_set(condition_str):
-    if "?" in condition_str:
-        return S.Reals
     try:
         if "≥" in condition_str:
-            val = int(condition_str.split("≥")[1].strip())
+            val = float(condition_str.split("≥")[1].strip())
             return Interval(val, S.Infinity)
         elif ">" in condition_str:
-            val = int(condition_str.split(">")[1].strip())
+            val = float(condition_str.split(">")[1].strip())
             return Interval.open(val, S.Infinity)
         elif "≠" in condition_str:
-            val = int(condition_str.split("≠")[1].strip())
+            val = float(condition_str.split("≠")[1].strip())
             return Union(Interval.open(-S.Infinity, val), Interval.open(val, S.Infinity))
     except:
         return S.Reals
@@ -177,19 +176,24 @@ def condition_to_set(condition_str):
 
 def parse_student_domain(reply):
     try:
-        reply = reply.lower().replace(" ", "").replace("∞", "oo").replace("+oo", "oo").replace("−", "-")
+        reply = reply.lower().replace(" ", "")
+        reply = reply.replace("∞", "oo").replace("+oo", "oo").replace("−", "-")
         reply = reply.replace("d=", "")
+
         match = re.match(r"[\[\]()\]]?(-?\d+)[;,]?(\+?oo)[\[\]()\]]?", reply)
         if match:
             a = float(match.group(1))
             return Interval(float(a), S.Infinity, left_open=reply.startswith("]") or reply.startswith("("))
+
         match_union = re.findall(r"-?oo,(-?\d+)", reply)
         match_union2 = re.findall(r"(-?\d+),\+?oo", reply)
         if len(match_union) == 1 and len(match_union2) == 2:
             a = float(match_union[0])
             return Union(Interval.open(-S.Infinity, a), Interval.open(a, S.Infinity))
+
         if "r" in reply or "reel" in reply:
             return S.Reals
+
     except:
         return None
     return None
@@ -198,18 +202,23 @@ def is_domain_correct_math(reply, conditions):
     sets = [condition_to_set(cond) for cond in conditions if "?" not in cond]
     if not sets:
         return False, "ℝ"
+
     correct_domain = sets[0]
     for s in sets[1:]:
         correct_domain = correct_domain.intersect(s)
+
     student_set = parse_student_domain(reply)
     correct_str = convert_to_notation(correct_domain)
+
     if student_set is None:
         return False, correct_str
+
     try:
         if student_set == correct_domain or Eq(student_set, correct_domain):
             return True, correct_str
     except:
         pass
+
     return False, correct_str
 
 def convert_to_notation(interval):
@@ -217,8 +226,9 @@ def convert_to_notation(interval):
         a = "-∞" if interval.start == S.NegativeInfinity else str(interval.start)
         b = "+∞" if interval.end == S.Infinity else str(interval.end)
         left = "]" if interval.left_open else "["
-        right = "[" if interval.right_open == False else "["
+        right = "[" if interval.right_open == False else "]"
         return f"{left}{a}, {b}{right}"
+
     elif isinstance(interval, Union):
         parts = [convert_to_notation(i) for i in interval.args]
         return " ∪ ".join(parts)
