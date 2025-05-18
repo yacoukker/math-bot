@@ -170,6 +170,15 @@ def error_explanation(type_, arg, condition):
         return f"Très bien. Le dénominateur ne doit jamais être nul. On a donc {condition}."
     return f"Voici la condition correcte : {condition}"
 
+def match_condition(reply, type_, arg):
+    reply = reply.replace(" ", "").replace(">=", "≥").replace("!=", "≠")
+    patterns = {
+        "racine": ["≥0", "positif", "nonnégatif", f"{arg}≥0"],
+        "log": [">0", "strictementpositif", f"{arg}>0"],
+        "denominateur": ["≠0", "différent", "nonnul", f"{arg}≠0"]
+    }
+    return any(p in reply for p in patterns.get(type_, []))
+
 def match_solution(reply, attendu):
     # تنظيف الجوابين من المسافات والرموز المكافئة
     normalize = lambda s: s.replace(" ", "").replace(">=", "≥").replace("<=", "≤").replace("!=", "≠").lower()
@@ -186,9 +195,7 @@ def match_solution(reply, attendu):
 
     return reply_parts == attendu_parts
 
-def match_solution(reply, attendu):
-    reply = reply.replace(" ", "").replace(">=", "≥").replace("!=", "≠")
-    return attendu.replace(" ", "") in reply
+
 
 def condition_to_set(condition_str):
     if "?" in condition_str:
