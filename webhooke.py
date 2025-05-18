@@ -1,5 +1,5 @@
 from flask import Flask, request, jsonify
-from sympy import symbols, Interval, Union, S, simplify, solveset, Eq
+from sympy import symbols, Interval, Union, S, Eq
 import re, os
 
 app = Flask(__name__)
@@ -12,13 +12,16 @@ def webhook():
     user_input = req.get('queryResult', {}).get('queryText', '').strip().lower()
     session_id = req.get('session', 'default')
 
+    # إعادة تعيين الجلسة عند إدخال دالة جديدة
     if "f(x)=" in user_input:
         session_state.pop(session_id, None)
 
+    # أمر إعادة تعيين الجلسة
     if "reset" in user_input and len(user_input) <= 20:
         session_state.pop(session_id, None)
         return respond("Très bien ! Reprenons depuis le début. Envoie-moi une nouvelle fonction sous la forme : f(x) = ...")
 
+    # بدء جلسة جديدة إذا لم تكن موجودة
     if session_id not in session_state:
         expr = extract_expr(user_input)
         if not expr:
@@ -40,8 +43,10 @@ def webhook():
         current_type, arg = components[0]
         return respond(f"Commençons. Quelle est la condition sur {component_label(current_type)} {arg} pour qu’il soit défini ?")
 
+    # جلسة مستمرة
     state = session_state[session_id]
 
+    # انتظار إجابة المجال النهائي
     if state.get("attente_finale"):
         if any(token in user_input for token in ["[", "]", "(", ")", "oo", "∞", "x", "≥", ">", "reel", "r"]):
             correct, bonne_reponse = is_domain_correct_math(user_input, state["conditions"])
@@ -74,36 +79,37 @@ def webhook():
             state["conditions"].append(solution)
             return next_step(state, session_id, f"Ce n’est pas tout à fait ça. En réalité, la solution est : {solution}")
 
+
 def next_step(state, session_id, message):
     state["current"] += 1
     state["mode"] = "condition"
-
     if state["current"] < len(state["steps"]):
         next_type, next_arg = state["steps"][state["current"]]
         return respond(message + f"\n\nPassons à {component_label(next_type)}. Quelle est la condition sur {next_arg} pour qu’il soit défini ?")
     else:
         state["attente_finale"] = True
-        conds = state["conditions"]
-        conditions_text = "\n".join(conds)
+        conditions_text = "\n".join(state["conditions"])
         return respond(message + "\n\nVoici les conditions obtenues sur x :\n" + conditions_text +
                        "\nPeux-tu en déduire maintenant l’ensemble de définition D ?")
 
-# ==== outils ====
+# ==== أدوات مساعدة ==== #
 
 def extract_expr(text):
     match = re.search(r"f\(x\)\s*=\s*(.+)", text)
     if not match:
         return None
     expr_raw = match.group(1)
-    return re.sub(r"√\s*\((.*?)\)", r"sqrt(\1)", expr_raw)
+    # استبدال الجذر التربيعي بالصيغة البرمجية
+    expr_raw = re.sub(r"√\s*(.*?)", r"sqrt(\1)", expr_raw)
+    return expr_raw
 
 def analyse_expression(expr):
     components = []
     components += [("racine", arg) for arg in re.findall(r'sqrt\((.*?)\)', expr)]
     components += [("log", arg) for arg in re.findall(r'log\((.*?)\)', expr)]
     if "/" in expr:
-        denom = expr.split("/")[-1]
-        components.append(("denominateur", denom.strip()))
+        denom = expr.split("/")[-1].strip()
+        components.append(("denominateur", denom))
     return components
 
 def component_label(type_):
@@ -123,20 +129,22 @@ def expected_condition(type_, arg):
     return ""
 
 def expected_solution(type_, arg):
-    try:
-        domain = solveset(expected_condition_expr(type_, arg), x, domain=S.Reals)
-        return convert_to_notation(domain)
-    except:
-        return "?"
-
-def expected_condition_expr(type_, arg):
-    arg_expr = simplify(arg)
     if type_ == "racine":
-        return arg_expr >= 0
+        return f"x ≥ {solve_for_x(arg)}"
     elif type_ == "log":
-        return arg_expr > 0
+        return f"x > {solve_for_x(arg)}"
     elif type_ == "denominateur":
-        return Eq(arg_expr, 0) == False
+        return f"x ≠ {solve_for_x(arg)}"
+    return ""
+
+def solve_for_x(expr):
+    expr = expr.replace(" ", "").strip("()")
+    # صيغة مبسطة للتحليل، يمكن تحسينها لاحقًا
+    match = re.match(r"x([\+\-])(\d+)", expr)
+    if match:
+        sign, number = match.groups()
+        return str(-int(number)) if sign == '+' else str(int(number))
+    return "?"
 
 def error_explanation(type_, arg, condition):
     if type_ == "racine":
@@ -157,21 +165,26 @@ def match_condition(reply, type_, arg):
     return any(p in reply for p in patterns.get(type_, []))
 
 def match_solution(reply, attendu):
-    return attendu.replace(" ", "") in reply.replace(" ", "")
+    reply = reply.replace(" ", "").replace(">=", "≥").replace("!=", "≠")
+    return attendu.replace(" ", "") in reply
 
 def condition_to_set(condition_str):
+    if "?" in condition_str:
+        return S.Reals
+
     try:
         if "≥" in condition_str:
-            val = float(condition_str.split("≥")[1].strip())
+            val = int(condition_str.split("≥")[1].strip())
             return Interval(val, S.Infinity)
         elif ">" in condition_str:
-            val = float(condition_str.split(">")[1].strip())
+            val = int(condition_str.split(">")[1].strip())
             return Interval.open(val, S.Infinity)
         elif "≠" in condition_str:
-            val = float(condition_str.split("≠")[1].strip())
+            val = int(condition_str.split("≠")[1].strip())
             return Union(Interval.open(-S.Infinity, val), Interval.open(val, S.Infinity))
     except:
         return S.Reals
+
     return S.Reals
 
 def parse_student_domain(reply):
@@ -179,18 +192,21 @@ def parse_student_domain(reply):
         reply = reply.lower().replace(" ", "")
         reply = reply.replace("∞", "oo").replace("+oo", "oo").replace("−", "-")
         reply = reply.replace("d=", "")
-
-        match = re.match(r"[\[\]()\]]?(-?\d+)[;,]?(\+?oo)[\[\]()\]]?", reply)
+        # استخراج مجال من النمط [a, +oo[ أو ]a, +oo[
+        match = re.match(r"[\[\]](-?\d+),\+?oo[\[\]]", reply)
         if match:
             a = float(match.group(1))
-            return Interval(float(a), S.Infinity, left_open=reply.startswith("]") or reply.startswith("("))
+            left_open = reply.startswith("]") or reply.startswith("(")
+            return Interval(a, S.Infinity, left_open=left_open)
 
+        # اتحاد مجالين ]-oo,a[ ∪ ]a,+oo[
         match_union = re.findall(r"-?oo,(-?\d+)", reply)
         match_union2 = re.findall(r"(-?\d+),\+?oo", reply)
         if len(match_union) == 1 and len(match_union2) == 2:
             a = float(match_union[0])
             return Union(Interval.open(-S.Infinity, a), Interval.open(a, S.Infinity))
 
+        # ℝ أو reel
         if "r" in reply or "reel" in reply:
             return S.Reals
 
@@ -226,16 +242,18 @@ def convert_to_notation(interval):
         a = "-∞" if interval.start == S.NegativeInfinity else str(interval.start)
         b = "+∞" if interval.end == S.Infinity else str(interval.end)
         left = "]" if interval.left_open else "["
-        right = "[" if interval.right_open == False else "]"
+        right = "[" if not interval.right_open else "]"
         return f"{left}{a}, {b}{right}"
 
     elif isinstance(interval, Union):
         parts = [convert_to_notation(i) for i in interval.args]
         return " ∪ ".join(parts)
+
     return "ℝ"
 
 def respond(text):
     return jsonify({"fulfillmentText": text})
+
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 10000))
