@@ -1,5 +1,5 @@
 from flask import Flask, request, jsonify
-from sympy import symbols, Interval, Union, S, simplify, Eq, solveset, sympify
+from sympy import symbols, Interval, Union, S, simplify, Eq, solve
 import re, os
 
 app = Flask(__name__)
@@ -11,7 +11,6 @@ def webhook():
     req = request.get_json()
     user_input = req.get('queryResult', {}).get('queryText', '').strip().lower()
     session_id = req.get('session', 'default')
-
     # ✅ Réinitialiser la session si une nouvelle fonction est introduite
     if "f(x)=" in user_input:
         session_state.pop(session_id, None)
@@ -45,6 +44,7 @@ def webhook():
     state = session_state[session_id]
 
     if state.get("attente_finale"):
+    # لا نقارن إلا إذا كانت الإجابة تحتوي رموز مجال
         if any(token in user_input for token in ["[", "]", "(", ")", "oo", "∞", "x", "≥", ">", "reel", "r"]):
             correct, bonne_reponse = is_domain_correct_math(user_input, state["conditions"])
             session_state.pop(session_id)
@@ -90,6 +90,8 @@ def next_step(state, session_id, message):
         return respond(message + "\n\nVoici les conditions obtenues sur x :\n" + conditions_text +
                        "\nPeux-tu en déduire maintenant l’ensemble de définition D ?")
 
+# ==== outils ====
+
 def extract_expr(text):
     match = re.search(r"f\(x\)\s*=\s*(.+)", text)
     if not match:
@@ -124,30 +126,155 @@ def expected_condition(type_, arg):
 
 def expected_solution(type_, arg):
     try:
-        if type_ == "racine":
-            solution_set = solveset(sympify(f"{arg} >= 0"), x, domain=S.Reals)
-        elif type_ == "log":
-            solution_set = solveset(sympify(f"{arg} > 0"), x, domain=S.Reals)
-        elif type_ == "denominateur":
-            solution_set = solveset(sympify(f"{arg} != 0"), x, domain=S.Reals)
-        else:
-            return "?"
-        return convert_to_notation(solution_set)
-    except:
-        return "x ≥ ?"
+        expr = arg.replace("^", "**").strip()
+        sym_expr = sympify(expr)
 
-def match_condition(reply, type_, arg):
-    reply = reply.replace(" ", "").replace(">=", "≥").replace("!=", "≠")
-    patterns = {
-        "racine": ["≥0", "positif", "nonnégatif", f"{arg}≥0"],
-        "log": [">0", "strictementpositif", f"{arg}>0"],
-        "denominateur": ["≠0", "différent", "nonnul", f"{arg}≠0"]
-    }
-    return any(p in reply for p in patterns.get(type_, []))
+        if type_ == "racine":
+            sols = solve(sym_expr >= 0, x)
+        elif type_ == "log":
+            sols = solve(sym_expr > 0, x)
+        elif type_ == "denominateur":
+            sols = solve(Eq(sym_expr, 0), x)
+            return " et ".join([f"x ≠ {s}" for s in sols])
+
+        if isinstance(sols, list):
+            return " ou ".join([str(s) for s in sols])
+        else:
+            return str(sols)
+    except Exception as e:
+        print(f"Erreur expected_solution: {e}")
+        return "?"
+        
+def solve_for_x(expr):
+    try:
+        # تحويل التعبير إلى كائن SymPy
+        expr = expr.replace("^", "**").strip()
+        sym_expr = sympify(expr)
+        # حل المعادلة sym_expr >= 0
+        solutions = solve(Eq(sym_expr, 0), x)
+        if not solutions:
+            return "?"
+        if len(solutions) == 1:
+            return str(solutions[0])
+        return " ou ".join([f"x ≤ {solutions[0]}, x ≥ {solutions[1]}" if solutions[0] < solutions[1]
+                            else f"x ≤ {solutions[1]}, x ≥ {solutions[0]}"])
+    except Exception as e:
+        print(f"Erreur dans solve_for_x: {e}")
+        return "?"
+def error_explanation(type_, arg, condition):
+    if type_ == "racine":
+        return f"Pas de souci. Pour que la racine carrée soit définie, ce qui est à l’intérieur doit être positif ou nul, donc ici {condition}."
+    elif type_ == "log":
+        return f"Aucun problème. Pour que le logarithme soit défini, l’argument doit être strictement positif, donc ici {condition}."
+    elif type_ == "denominateur":
+        return f"Très bien. Le dénominateur ne doit jamais être nul. On a donc {condition}."
+    return f"Voici la condition correcte : {condition}"
+
+def match_solution(reply, attendu):
+    # تنظيف الجوابين من المسافات والرموز المكافئة
+    normalize = lambda s: s.replace(" ", "").replace(">=", "≥").replace("<=", "≤").replace("!=", "≠").lower()
+    reply_norm = normalize(reply)
+    attendu_norm = normalize(attendu)
+
+    # مقارنة مباشرة
+    if attendu_norm in reply_norm:
+        return True
+
+    # محاولة مطابقة جذرًا بجذر إذا كان هناك عدة شروط مفصولة بـ ou / et
+    reply_parts = set(re.split(r"[ouet]+", reply_norm))
+    attendu_parts = set(re.split(r"[ouet]+", attendu_norm))
+
+    return reply_parts == attendu_parts
 
 def match_solution(reply, attendu):
     reply = reply.replace(" ", "").replace(">=", "≥").replace("!=", "≠")
     return attendu.replace(" ", "") in reply
+
+def condition_to_set(condition_str):
+    if "?" in condition_str:
+        return S.Reals  # تجاهل الشروط غير المفهومة
+
+    try:
+        if "≥" in condition_str:
+            val = int(condition_str.split("≥")[1].strip())
+            return Interval(val, S.Infinity)
+        elif ">" in condition_str:
+            val = int(condition_str.split(">")[1].strip())
+            return Interval.open(val, S.Infinity)
+        elif "≠" in condition_str:
+            val = int(condition_str.split("≠")[1].strip())
+            return Union(Interval.open(-S.Infinity, val), Interval.open(val, S.Infinity))
+    except:
+        return S.Reals
+
+    return S.Reals
+
+def parse_student_domain(reply):
+    try:
+        reply = reply.lower().replace(" ", "")
+        reply = reply.replace("∞", "oo").replace("+oo", "oo").replace("−", "-")
+        # Enlever "d=" s'il existe
+        reply = reply.replace("d=", "")
+        # [-2,+oo[ ou ]-2,+oo[ ou [ -2 , +oo [
+        match = re.match(r"[\[\]()\]]?(-?\d+)[;,]?(\+?oo)[\[\]()\]]?", reply)
+        if match:
+            a = float(match.group(1))
+            return Interval(float(a), S.Infinity, left_open=reply.startswith("]") or reply.startswith("("))
+
+        # union de deux intervalles : ]-oo,a[ ∪ ]a,+oo[
+        match_union = re.findall(r"-?oo,(-?\d+)", reply)
+        match_union2 = re.findall(r"(-?\d+),\+?oo", reply)
+        if len(match_union) == 1 and len(match_union2) == 2:
+            a = float(match_union[0])
+            return Union(Interval.open(-S.Infinity, a), Interval.open(a, S.Infinity))
+
+        # ℝ ou reel
+        if "r" in reply or "reel" in reply:
+            return S.Reals
+
+    except:
+        return None
+    return None
+
+
+
+def is_domain_correct_math(reply, conditions):
+    sets = [condition_to_set(cond) for cond in conditions if "?" not in cond]
+    if not sets:
+        return False, "ℝ"
+
+    correct_domain = sets[0]
+    for s in sets[1:]:
+        correct_domain = correct_domain.intersect(s)
+
+    student_set = parse_student_domain(reply)
+    correct_str = convert_to_notation(correct_domain)
+
+    if student_set is None:
+        return False, correct_str
+
+    # ✅ مقارنة رياضية دقيقة باستخدام SymPy
+    try:
+        if student_set == correct_domain or Eq(student_set, correct_domain):
+            return True, correct_str
+    except:
+        pass
+
+    return False, correct_str
+
+
+def convert_to_notation(interval):
+    if isinstance(interval, Interval):
+        a = "-∞" if interval.start == S.NegativeInfinity else str(interval.start)
+        b = "+∞" if interval.end == S.Infinity else str(interval.end)
+        left = "]" if interval.left_open else "["
+        right = "[" if interval.right_open == False else "["
+        return f"{left}{a}, {b}{right}"
+
+    elif isinstance(interval, Union):
+        parts = [convert_to_notation(i) for i in interval.args]
+        return " ∪ ".join(parts)
+    return "ℝ"
 
 def respond(text):
     return jsonify({"fulfillmentText": text})
