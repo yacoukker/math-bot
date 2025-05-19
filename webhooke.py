@@ -1,5 +1,5 @@
 from flask import Flask, request, jsonify
-from sympy import symbols, Interval, Union, S, simplify, Eq
+from sympy import symbols, Interval, Union, S, simplify, Eq, solve, Rel
 import re, os
 
 app = Flask(__name__)
@@ -164,22 +164,37 @@ def expected_condition(type_, arg):
 
 def expected_solution(type_, arg):
     if type_ == "racine":
-        return f"x ≥ {solve_for_x(arg)}"
+        return solve_for_x(arg, "≥")
     elif type_ == "log":
-        return f"x > {solve_for_x(arg)}"
+        return solve_for_x(arg, ">")
     elif type_ == "denominateur":
-        return f"x ≠ {solve_for_x(arg)}"
-    return ""
-
-
-def solve_for_x(expr):
-    expr = expr.replace(" ", "")
-    expr = expr.strip("()")  # إزالة الأقواس إذا وُجدت
-    match = re.match(r"x([\+\-])(\d+)", expr)
-    if match:
-        sign, number = match.groups()
-        return str(-int(number)) if sign == "+" else str(int(number))
+        return solve_for_x(arg, "≠")
     return "?"
+
+
+
+def solve_for_x(expr, inequality_type=">="):
+    try:
+        expr = expr.replace("^", "**")  # sympy يفهم ** بدلاً من ^
+        parsed_expr = sympify(expr)
+        
+        if inequality_type == "≥":
+            solutions = solve(parsed_expr >= 0, x)
+        elif inequality_type == ">":
+            solutions = solve(parsed_expr > 0, x)
+        elif inequality_type == "≠":
+            solutions = solve(parsed_expr != 0, x)
+        else:
+            solutions = solve(parsed_expr, x)
+
+        if isinstance(solutions, (list, tuple)):
+            return " ou ".join([f"x {inequality_type} {sol}" for sol in solutions])
+        elif isinstance(solutions, Rel):
+            return str(solutions)
+        else:
+            return f"x {inequality_type} {solutions}"
+    except Exception:
+        return "?"
 
 
 def error_explanation(type_, arg, condition):
