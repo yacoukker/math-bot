@@ -85,16 +85,30 @@ def webhook():
             expl = error_explanation(ctype, carg, condition)
             return respond(f"{expl}\nPeux-tu résoudre maintenant ? {condition}")
 
-    else:  # mode == "solution"
-        if match_solution(user_input, solution):
-            state["conditions"].append(condition_to_str(solution))
-            return next_step(state, session_id, "Bien joué !")
-        else:
-            state["conditions"].append(condition_to_str(solution))
-            return next_step(
-                state, session_id,
-                f"Ce n’est pas tout à fait ça. La solution correcte est : {solution}"
+    elif state["mode"] == "solution":
+        sol = solution  # la chaîne retournée par expected_solution
+        # si l'élève répond correctement
+        if match_solution(user_input, sol):
+            state["conditions"].append(sol)
+            # réponse positive
+            return respond(
+                "Formidable ! Les conditions sur x sont :\n"
+                f"• {sol}\n\n"
+                "Peux-tu maintenant en déduire l’ensemble de définition D ?"
             )
+        else:
+            # on collecte tout de même la solution pour le récap
+            state["conditions"].append(sol)
+            # réponse corrective
+            recap = "\n".join(f"• {c}" for c in state["conditions"])
+            return respond(
+                "Pas de problème. La solution de l’inéquation est :\n"
+                f"{sol}\n\n"
+                "Les conditions sur x sont :\n"
+                f"{recap}\n\n"
+                "Peux-tu maintenant en déduire l’ensemble de définition D ?"
+            )
+
 
 
 def next_step(state, session_id, msg):
@@ -118,6 +132,47 @@ def next_step(state, session_id, msg):
 
 
 # ======== الأدوات ========
+
+def solve_set(expr_str, mode):
+    """Retourne l’objet Solveset sur ℝ."""
+    e = simplify(expr_str.replace("^","**"))
+    if mode == "ge": return solveset(e >= 0, x, domain=S.Reals)
+    if mode == "gt": return solveset(e >  0, x, domain=S.Reals)
+    if mode == "ne": return solveset(e != 0, x, domain=S.Reals)
+    return S.Reals
+
+def inequality_str(sol_set):
+    """Transforme un Solveset en texte 'x <= a ou x >= b' ou 'x != a'."""
+    if sol_set is S.EmptySet:
+        return "∅"
+    # cas '≠'
+    if isinstance(sol_set, Union):
+        parts = []
+        for iv in sol_set.args:
+            if isinstance(iv, Interval):
+                # union de deux intervalles open autour de val
+                a, b = iv.start, iv.end
+                if a == -S.Infinity and b != S.Infinity:
+                    parts.append(f"x < {b}")
+                elif b == S.Infinity and a != -S.Infinity:
+                    parts.append(f"x > {a}")
+        # si c'est issu d'un ≠ c, on aura deux open autour de c
+        if len(parts)==2 and parts[0].startswith("x <") and parts[1].startswith("x >"):
+            # x != c
+            c = sol_set.args[0].end
+            return f"x != {c}"
+        return " ou ".join(parts)
+    # cas interval unique
+    if isinstance(sol_set, Interval):
+        a, b = sol_set.start, sol_set.end
+        left = "<" if sol_set.left_open else "≤"
+        right= "<" if sol_set.right_open else "≤"
+        if a == -S.Infinity:    # (-∞, b] ou (-∞, b)
+            return f"x {left} {b}"
+        if b == S.Infinity:     # [a, ∞) ou (a, ∞)
+            return f"x {right} {a}"
+    # fallback
+    return str(sol_set)
 
 def extract_expr(text):
     m = re.search(r"f\(x\)\s*=\s*(.+)", text)
@@ -145,10 +200,12 @@ def expected_condition(t, arg):
     if t == "denominateur": return f"{arg} ≠ 0"
 
 
-def expected_solution(t, arg):
-    # نُمرّر إلى solveset بحسب النوع
-    mode = {"racine":"ge","log":"gt","denominateur":"ne"}[t]
-    return solve_inequality(arg, mode)
+def expected_solution(type_, arg):
+    modes = {"racine":"ge", "log":"gt", "denominateur":"ne"}
+    sol_set = solve_set(arg, modes[type_])
+    # on garde à la fois l'objet et son texte
+    return inequality_str(sol_set)
+
 
 
 def solve_inequality(expr_str, mode):
