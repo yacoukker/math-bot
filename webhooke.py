@@ -1,5 +1,5 @@
 from flask import Flask, request, jsonify
-from sympy import symbols, Interval, Union, S, simplify, Eq, solve, Rel
+from sympy import symbols, Interval, Union, S, simplify, Eq, solve, Rel, solveset
 import re, os
 
 app = Flask(__name__)
@@ -164,37 +164,36 @@ def expected_condition(type_, arg):
 
 def expected_solution(type_, arg):
     if type_ == "racine":
-        return solve_for_x(arg, "≥")
+        # المتراجحة expr ≥ 0
+        return solve_inequality(arg, "ge")
     elif type_ == "log":
-        return solve_for_x(arg, ">")
+        # expr > 0
+        return solve_inequality(arg, "gt")
     elif type_ == "denominateur":
-        return solve_for_x(arg, "≠")
+        # expr ≠ 0
+        return solve_inequality(arg, "ne")
     return "?"
 
 
-
-def solve_for_x(expr, inequality_type=">="):
+def solve_inequality(expr_str, mode):
+    """
+    mode: "ge" for ≥0, "gt" for >0, "ne" for ≠0
+    """
     try:
-        expr = expr.replace("^", "**")  # sympy يفهم ** بدلاً من ^
-        parsed_expr = sympify(expr)
-        
-        if inequality_type == "≥":
-            solutions = solve(parsed_expr >= 0, x)
-        elif inequality_type == ">":
-            solutions = solve(parsed_expr > 0, x)
-        elif inequality_type == "≠":
-            solutions = solve(parsed_expr != 0, x)
+        # تعويض ^ → **
+        expr = simplify(expr_str.replace("^", "**"))
+        if mode == "ge":
+            sol = solveset(expr >= 0, x, domain=S.Reals)
+        elif mode == "gt":
+            sol = solveset(expr > 0,  x, domain=S.Reals)
+        elif mode == "ne":
+            sol = solveset(expr != 0, x, domain=S.Reals)
         else:
-            solutions = solve(parsed_expr, x)
-
-        if isinstance(solutions, (list, tuple)):
-            return " ou ".join([f"x {inequality_type} {sol}" for sol in solutions])
-        elif isinstance(solutions, Rel):
-            return str(solutions)
-        else:
-            return f"x {inequality_type} {solutions}"
+            return "?"
+        return convert_to_notation(sol)
     except Exception:
         return "?"
+
 
 
 def error_explanation(type_, arg, condition):
@@ -218,9 +217,17 @@ def match_condition(reply, type_, arg):
 
 
 def match_solution(reply, attendu):
-    reply = reply.replace(" ", "").replace(">=", "≥").replace("!=", "≠")
-    return attendu.replace(" ", "") in reply
-
+    # نطبع الحرفية المتوقعة وننظف النصّين
+    norm = lambda s: re.sub(r"\s+", "", s.lower()) \
+                 .replace(">=", "≥").replace("<=", "≤").replace("!=", "≠")
+    r, a = norm(reply), norm(attendu)
+    # إذا كان المتوقع موجودًا في ردّ التلميذ
+    if a in r:
+        return True
+    # تقسيم إلى أجزاء حول "ou" أو "∪"
+    parts_r = set(re.split(r"ou|∪", r))
+    parts_a = set(re.split(r"ou|∪", a))
+    return parts_a == parts_r
 
 def condition_to_set(condition_str):
     if "?" in condition_str:
@@ -301,18 +308,30 @@ def is_domain_correct_math(reply, conditions):
     return False, correct_str
 
 
-def convert_to_notation(interval):
-    if isinstance(interval, Interval):
-        a = "-∞" if interval.start == S.NegativeInfinity else str(interval.start)
-        b = "+∞" if interval.end == S.Infinity else str(interval.end)
-        left = "]" if interval.left_open else "["
-        right = "[" if interval.right_open == False else "["
+def convert_to_notation(sol_set):
+    # حالة الفارغة
+    if sol_set is EmptySet:
+        return "∅"
+
+    # فاصل واحد
+    if isinstance(sol_set, Interval):
+        a = "-∞" if sol_set.start == S.NegativeInfinity else str(sol_set.start)
+        b = "+∞" if sol_set.end   == S.Infinity         else str(sol_set.end)
+        left  = "[" if not sol_set.left_open  else "]"
+        right = "]" if not sol_set.right_open else "["
         return f"{left}{a}, {b}{right}"
 
-    elif isinstance(interval, Union):
-        parts = [convert_to_notation(i) for i in interval.args]
+    # اتحاد فترات
+    if isinstance(sol_set, Union):
+        parts = [convert_to_notation(i) for i in sol_set.args]
         return " ∪ ".join(parts)
-    return "ℝ"
+
+    # كل الأعداد الحقيقية
+    if sol_set is S.Reals:
+        return "ℝ"
+
+    # fallback لأي نوع آخر
+    return str(sol_set)
 
 
 def respond(text):
