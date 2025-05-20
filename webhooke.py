@@ -5,9 +5,8 @@ import re, os
 
 app = Flask(__name__)
 
-# Symbol
-x = symbols('x')
-# Session storage
+# Symbol\ nx = symbols('x')
+# In-memory sessions
 sessions = {}
 
 # Convert Sympy set to French interval notation
@@ -25,53 +24,67 @@ def to_french_interval(sol_set):
         return ' ∪ '.join(to_french_interval(i) for i in sol_set.args)
     return str(sol_set)
 
-# Parse student interval reply
+# Parse student's interval string into Sympy set
 def parse_student_set(reply):
     try:
         r = reply.replace(' ', '').replace('∞', 'oo')
         r = r.replace('][', '] ∪ [').replace('U', ' ∪ ')
         return parse_expr(r, evaluate=False)
-    except:
+    except Exception:
         return None
 
-# Analyze expression components
+# Preprocess expression: replace ^ with ** and insert * for multiplication
+def preprocess(expr):
+    expr = expr.replace('^', '**')
+    # Insert * between number and variable or ( ; and between ) and number or variable
+    expr = re.sub(r'(?<=\d)(?=[a-zA-Z\(])', '*', expr)
+    expr = re.sub(r'(?<=[a-zA-Z\)])(?=\d|\()', '*', expr)
+    return expr
+
+# Analyze expression components for domain conditions
 def analyse_expr(expr):
     comps = []
     # racine
     for arg in re.findall(r'sqrt\((.*?)\)', expr):
-        cond = solveset(parse_expr(arg) >= 0, x, domain=S.Reals)
+        arg_p = preprocess(arg)
+        cond = solveset(parse_expr(arg_p) >= 0, x, domain=S.Reals)
         comps.append({'type':'racine','arg':arg,'cond_set':cond})
-    # log
+    # logarithme
     for arg in re.findall(r'log\((.*?)\)', expr):
-        cond = solveset(parse_expr(arg) > 0, x, domain=S.Reals)
+        arg_p = preprocess(arg)
+        cond = solveset(parse_expr(arg_p) > 0, x, domain=S.Reals)
         comps.append({'type':'log','arg':arg,'cond_set':cond})
-    # denom
+    # dénominateur
     if '/' in expr:
         denom = expr.split('/')[-1]
-        cond = solveset(parse_expr(denom) != 0, x, domain=S.Reals)
+        denom_p = preprocess(denom)
+        cond = solveset(parse_expr(denom_p) != 0, x, domain=S.Reals)
         comps.append({'type':'denom','arg':denom,'cond_set':cond})
     return comps
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
     req = request.get_json()
-    text = req.get('queryResult',{}).get('queryText','').strip()
+    text = req.get('queryResult', {}).get('queryText', '').strip()
     sess = req.get('session', 'default')
 
-    # Reset or new function
-    if text.lower().startswith('/reset') or ('f(x)' in text and '=' in text):
+    # Reset session
+    if text.lower().startswith('/reset'):
         sessions.pop(sess, None)
-        if text.lower().startswith('/reset'):
-            return respond("Session réinitialisée. Envoie une nouvelle fonction: f(x)=...")
+        return respond("Session réinitialisée. Envoie une nouvelle fonction: f(x)=...")
+    # New function
+    if 'f(x)' in text and '=' in text:
+        sessions.pop(sess, None)
 
     state = sessions.get(sess)
-    # Start session
+    # Start
     if not state:
         m = re.search(r'f\(x\)\s*=\s*(.+)', text)
         if not m:
             return respond("Écris la fonction sous la forme f(x)=... pour démarrer.")
         raw = m.group(1)
         raw = re.sub(r'√\s*\((.*?)\)', r'sqrt(\1)', raw)
+        raw = preprocess(raw)
         comps = analyse_expr(raw)
         sessions[sess] = {'comps':comps, 'idx':0, 'substep':0, 'conds':[], 'ask_domain':False}
         step = comps[0]
@@ -81,50 +94,50 @@ def webhook():
     idx = state['idx']
     comps = state['comps']
 
-    # After gathering all conditions and solutions, ask for domain
+    # Requesting domain final
     if state.get('ask_domain'):
         student = parse_student_set(text)
         domain = state['conds'][0]
-        for c in state['conds'][1:]: domain = domain.intersect(c)
+        for c in state['conds'][1:]:
+            domain = domain.intersect(c)
         correct = to_french_interval(domain)
         sessions.pop(sess)
         if student and student == domain:
-            return respond(f"احسنت عمل رائع تهانينا!")
+            return respond("احسنت عمل رائع تهانينا!")
         else:
             return respond(f"لا بأس، مجموعة التعريف هي {correct}. مع قليل من التدريب ستصبح قادراً على إيجاد مجموعة التعريف بسهولة.")
 
-    # Current component
     comp = comps[idx]
     cond = comp['cond_set']
     french_cond = to_french_interval(cond)
 
-    # Substep 0: ask condition inequality
+    # Ask condition
     if state['substep'] == 0:
-        # Check wrong reply
-        if re.search(r'لا\s', text) or 'لااعرف' in text.replace(' ',''):
-            return respond(f"لا بأس، نذكرك أن لكي يكون {comp['type']} معرفاً يجب أن يكون ما بداخله { '≥ 0' if comp['type']=='racine' else '> 0' if comp['type']=='log' else '≠ 0'}، وفي حالتنا يجب أن تكون {french_cond}. الآن حل المتراجحة في مسودتك وأجب بالحل الذي توصلت إليه.")
-        # Good
+        if re.search(r'لا\s', text) or 'لااعرف' in text.replace(' ', ''):
+            msg = f"لا بأس، نذكرك أنه لكي يكون {comp['type']} معرفاً يجب أن يكون ما بداخله {'≥ 0' if comp['type']=='racine' else '> 0' if comp['type']=='log' else '≠ 0'}، وفي حالتنا يجب أن تكون {french_cond}."
+            return respond(f"{msg} الآن حل المتراجحة في مسودتك وأجب بالحل الذي توصلت إليه.")
         state['substep'] = 1
-        return respond(f"احسنت. الآن حل المتراجحة {comp['arg']} { '≥ 0' if comp['type']=='racine' else '> 0' if comp['type']=='log' else '≠ 0'} وأجب بالحل الذي توصلت إليه.")
+        return respond(f"احسنت. الآن حل المتراجحة {comp['arg']} {'≥ 0' if comp['type']=='racine' else '> 0' if comp['type']=='log' else '≠ 0'} وأجب بالحل الذي توصلت إليه.")
 
-    # Substep 1: check solution
+    # Check solution
     student = parse_student_set(text)
     state['conds'].append(cond)
     if student and student == cond:
         reply = "جيد جداً أنت في الطريق الصحيح."
     else:
         reply = f"لا بأس، حل هذه المتراجحة هو {french_cond}."
-    # next
+    # Next component or domain
     state['idx'] += 1
     state['substep'] = 0
     if state['idx'] < len(comps):
         nxt = comps[state['idx']]
         return respond(f"{reply}\nالآن ما هو الشرط على {nxt['arg']} ليكون معرفاً؟")
-    # all components done, ask domain
+
+    # Ask domain
     state['ask_domain'] = True
     return respond(f"{reply}\nالآن هل يمكنك التوصل إلى مجموعة التعريف؟")
 
-# Helper to send JSON response
+# JSON response helper
 def respond(txt):
     return jsonify({'fulfillmentText': txt})
 
