@@ -1,163 +1,309 @@
 from flask import Flask, request, jsonify
-from sympy import symbols, solveset, S, Eq
-from sympy.parsing.sympy_parser import parse_expr
-from sympy.sets.sets import Set
+from sympy import symbols, Interval, Union, S, simplify, Eq
 import re, os
 
 app = Flask(__name__)
+x = symbols("x")
+session_state = {}
 
-# Déclaration de la variable utilisée dans les expressions mathématiques
-x = symbols('x')
 
-# Dictionnaire pour stocker les sessions utilisateur
-sessions = {}
-
-# Fonction pour convertir un ensemble Sympy en une notation d'intervalle en français
-# Exemple : Interval.open(-∞, 3) -> ]-∞,3[
-def to_french_interval(sol_set):
-    from sympy import Interval, Union
-    if sol_set == S.Reals:
-        return 'ℝ'
-    if isinstance(sol_set, Interval):
-        left = '[' if not sol_set.left_open else ']'
-        right = '[' if not sol_set.right_open else ']'
-        start = '-∞' if sol_set.start == S.NegativeInfinity else str(sol_set.start)
-        end = '+∞' if sol_set.end == S.Infinity else str(sol_set.end)
-        return f"{left}{start},{end}{right}"
-    if isinstance(sol_set, Union):
-        return ' ∪ '.join(to_french_interval(i) for i in sol_set.args)
-    return str(sol_set)
-
-# Analyse et conversion de la réponse de l'élève en une expression Sympy
-def parse_student_set(reply):
-    try:
-        r = reply.replace(' ', '').replace('∞', 'oo')
-        r = r.replace('][', '] ∪ [').replace('U', ' ∪ ')
-        return parse_expr(r, evaluate=False)
-    except:
-        return None
-
-# Prétraitement de l'expression : conversion des puissances et insertion des multiplications manquantes
-def preprocess(expr):
-    expr = expr.replace('^', '**')
-    expr = re.sub(r'(?<=\d)(?=[a-zA-Z\(])', '*', expr)
-    expr = re.sub(r'(?<=[a-zA-Z\)])(?=\d|\()', '*', expr)
-    return expr
-
-# Analyse de l'expression pour extraire les conditions de définition
-def analyse_expr(expr):
-    comps = []
-    # Racines carrées -> condition : argument >= 0
-    for arg in re.findall(r'sqrt\((.*?)\)', expr):
-        arg_p = preprocess(arg)
-        cond = solveset(parse_expr(arg_p) >= 0, x, domain=S.Reals)
-        comps.append({'type':'racine','arg':arg,'cond_set':cond})
-    # Logarithmes -> condition : argument > 0
-    for arg in re.findall(r'log\((.*?)\)', expr):
-        arg_p = preprocess(arg)
-        cond = solveset(parse_expr(arg_p) > 0, x, domain=S.Reals)
-        comps.append({'type':'log','arg':arg,'cond_set':cond})
-    # Dénominateurs -> condition : dénominateur ≠ 0
-    if '/' in expr:
-        denom = expr.split('/')[-1]
-        denom_p = preprocess(denom)
-        zeros = solveset(Eq(parse_expr(denom_p), 0), x, domain=S.Reals)
-        cond = S.Reals - zeros
-        comps.append({'type':'denom','arg':denom,'cond_set':cond})
-    return comps
-
-@app.route('/webhook', methods=['POST'])
+@app.route("/webhook", methods=["POST"])
 def webhook():
     req = request.get_json()
-    text = req.get('queryResult', {}).get('queryText', '').strip()
-    sess = req.get('session', 'default')
+    user_input = req.get("queryResult", {}).get("queryText", "").strip().lower()
+    session_id = req.get("session", "default")
+    # ✅ Réinitialiser la session si une nouvelle fonction est introduite
+    if "f(x)=" in user_input:
+        session_state.pop(session_id, None)
 
-    # Réinitialisation de la session
-    if text.lower().startswith('/reset'):
-        sessions.pop(sess, None)
-        return respond("Session réinitialisée. Envoyez f(x)=... pour recommencer.")
-    # Nouvelle fonction f(x)=...
-    if 'f(x)' in text and '=' in text:
-        sessions.pop(sess, None)
+    # ✅ Bloc /reset → réinitialise la session et répond avec un message
+    if "reset" in user_input and len(user_input) <= 20:
+        session_state.pop(session_id, None)
+        return respond(
+            "Très bien ! Reprenons depuis le début. Envoie-moi une nouvelle fonction sous la forme : f(x) = ..."
+        )
 
-    state = sessions.get(sess)
+    if session_id not in session_state:
+        expr = extract_expr(user_input)
+        if not expr:
+            return respond("Écris la fonction sous la forme : f(x) = ...")
 
-    # Démarrage de la session
-    if not state:
-        m = re.search(r'f\(x\)=\s*(.+)', text)
-        if not m:
-            return respond("Écrivez la fonction sous la forme f(x)=... pour commencer.")
-        raw = m.group(1)
-        raw = re.sub(r'√\s*\((.*?)\)', r'sqrt(\1)', raw)
-        raw = preprocess(raw)
-        comps = analyse_expr(raw)
-        sessions[sess] = {'comps':comps,'idx':0,'substep':0,'conds':[],'ask_domain':False}
-        step = comps[0]
-        return respond(f"Très bien, commençons. Quelle est la condition sur {step['arg']} pour qu'il soit défini ?")
+        components = analyse_expression(expr)
+        if not components:
+            return respond(
+                "La fonction est définie sur ℝ : aucun log, racine ni dénominateur détecté."
+            )
 
-    # Récupération de l'état de session
-    state = sessions[sess]
-    idx = state['idx']
-    comp = state['comps'][idx]
-    cond = comp['cond_set']
-    french_cond = to_french_interval(cond)
+        session_state[session_id] = {
+            "expr": expr,
+            "steps": components,
+            "current": 0,
+            "mode": "condition",
+            "conditions": [],
+            "attente_finale": False,
+        }
 
-    # Vérification de la réponse finale sur le domaine
-    if state.get('ask_domain'):
-        student = parse_student_set(text)
-        domain = state['conds'][0]
-        for c in state['conds'][1:]:
-            domain = domain.intersect(c)
-        correct = to_french_interval(domain)
-        sessions.pop(sess)
-        if student and student == domain:
-            return respond("Bravo ! Vous avez trouvé le domaine de définition.")
-        else:
-            return respond(f"Ce n'est pas correct. Le domaine de définition est {correct}.")
+        current_type, arg = components[0]
+        return respond(
+            f"Commençons. Quelle est la condition sur {component_label(current_type)} {arg} pour qu’il soit défini ?"
+        )
 
-    # Étape 0 : poser la condition de définition
-    if state['substep']==0:
-        if re.search(r'\bnon\b', text.lower()) or 'je ne sais pas' in text.lower():
-            msg = (f"D'accord. Pour que {comp['type']} soit défini, "
-                   + ("l'expression sous la racine ≥ 0" if comp['type']=='racine' else
-                      "l'argument du log > 0" if comp['type']=='log' else
-                      "le dénominateur ≠ 0")
-                   + f"; ici {french_cond}.")
-            return respond(f"{msg} Maintenant, résolvez cette condition et donnez votre solution.")
-        state['substep']=1
-        return respond(f"Parfait. Résolvez {comp['arg']} {'≥ 0' if comp['type']=='racine' else '> 0' if comp['type']=='log' else '≠ 0'} et indiquez votre solution.")
+    state = session_state[session_id]
 
-    # Étape 1 : validation de la solution de l'élève
-    student = parse_student_set(text)
-    try:
-        if student:
-            student_set = solveset(student, x, domain=S.Reals) if not isinstance(student, Set) else student
-            if student_set.equals(cond):
-                reply = "Très bien, c'est correct."
+    if state.get("attente_finale"):
+        # لا نقارن إلا إذا كانت الإجابة تحتوي رموز مجال
+        if any(
+            token in user_input
+            for token in ["[", "]", "(", ")", "oo", "∞", "x", "≥", ">", "reel", "r"]
+        ):
+            correct, bonne_reponse = is_domain_correct_math(
+                user_input, state["conditions"]
+            )
+            session_state.pop(session_id)
+            if correct:
+                return respond(
+                    "Bravo ! Tu as correctement trouvé l'ensemble de définition."
+                )
             else:
-                reply = f"Ce n'est pas correct. La solution est {french_cond}."
+                return respond(
+                    f"Ce n’est pas tout à fait correct. L’ensemble de définition est : D = {bonne_reponse}\nNe t’inquiète pas, tu peux y arriver avec un peu de pratique !"
+                )
         else:
-            reply = f"Ce n'est pas correct. La solution est {french_cond}."
-    except Exception:
-        reply = f"Erreur dans l'analyse de votre réponse. La solution correcte est {french_cond}."
+            return respond(
+                "Essaie de donner l’ensemble sous forme d’un intervalle, par exemple : ]2,+∞[ ou ℝ."
+            )
 
-    # Passer à l'élément suivant ou demander le domaine
-    state['conds'].append(cond)
-    state['idx']+=1
-    state['substep']=0
-    if state['idx']<len(state['comps']):
-        nxt=state['comps'][state['idx']]
-        return respond(f"{reply}\nProchaine condition : sur {nxt['arg']}, quelle est la condition pour qu'il soit défini ?")
+    current_type, arg = state["steps"][state["current"]]
+    condition = expected_condition(current_type, arg)
+    solution = expected_solution(current_type, arg)
 
-    # Demande finale de la part de l'élève
-    state['ask_domain']=True
-    return respond(f"{reply}\nMaintenant, donnez le domaine de définition de f(x).")
+    if state["mode"] == "condition":
+        if match_condition(user_input, current_type, arg):
+            state["mode"] = "solution"
+            return respond(
+                f"Parfait ! Résous maintenant cette inéquation : {condition}"
+            )
+        else:
+            state["mode"] = "solution"
+            explication = error_explanation(current_type, arg, condition)
+            return respond(
+                f"{explication}\nPeux-tu résoudre maintenant cette inéquation : {condition} ?"
+            )
 
-# Fonction utilitaire pour envoyer la réponse à Dialogflow
-def respond(txt):
-    return jsonify({'fulfillmentText':txt})
+    elif state["mode"] == "solution":
+        if match_solution(user_input, solution):
+            state["conditions"].append(solution)
+            return next_step(state, session_id, "Bien joué !")
+        else:
+            state["conditions"].append(solution)
+            return next_step(
+                state,
+                session_id,
+                f"Ce n’est pas tout à fait ça. En réalité, la solution est : {solution}",
+            )
 
-# Lancement du serveur Flask
-if __name__=='__main__':
-    port=int(os.environ.get('PORT',10000))
-    app.run(host='0.0.0.0',port=port)
+
+def next_step(state, session_id, message):
+    state["current"] += 1
+    state["mode"] = "condition"
+
+    if state["current"] < len(state["steps"]):
+        next_type, next_arg = state["steps"][state["current"]]
+        return respond(
+            message
+            + f"\n\nPassons à {component_label(next_type)}. Quelle est la condition sur {next_arg} pour qu’il soit défini ?"
+        )
+    else:
+        state["attente_finale"] = True
+        conds = state["conditions"]
+        conditions_text = "\n".join(conds)
+        return respond(
+            message
+            + "\n\nVoici les conditions obtenues sur x :\n"
+            + conditions_text
+            + "\nPeux-tu en déduire maintenant l’ensemble de définition D ?"
+        )
+
+
+# ==== outils ====
+
+
+def extract_expr(text):
+    match = re.search(r"f\(x\)\s*=\s*(.+)", text)
+    if not match:
+        return None
+    expr_raw = match.group(1)
+    return re.sub(r"√\s*\((.*?)\)", r"sqrt(\1)", expr_raw)
+
+
+def analyse_expression(expr):
+    components = []
+    components += [("racine", arg) for arg in re.findall(r"sqrt\((.*?)\)", expr)]
+    components += [("log", arg) for arg in re.findall(r"log\((.*?)\)", expr)]
+    if "/" in expr:
+        denom = expr.split("/")[-1]
+        components.append(("denominateur", denom.strip()))
+    return components
+
+
+def component_label(type_):
+    return {"racine": "√", "log": "log", "denominateur": "le dénominateur"}.get(
+        type_, "cette expression"
+    )
+
+
+def expected_condition(type_, arg):
+    if type_ == "racine":
+        return f"{arg} ≥ 0"
+    elif type_ == "log":
+        return f"{arg} > 0"
+    elif type_ == "denominateur":
+        return f"{arg} ≠ 0"
+    return ""
+
+
+def expected_solution(type_, arg):
+    if type_ == "racine":
+        return f"x ≥ {solve_for_x(arg)}"
+    elif type_ == "log":
+        return f"x > {solve_for_x(arg)}"
+    elif type_ == "denominateur":
+        return f"x ≠ {solve_for_x(arg)}"
+    return ""
+
+
+def solve_for_x(expr):
+    expr = expr.replace(" ", "")
+    expr = expr.strip("()")  # إزالة الأقواس إذا وُجدت
+    match = re.match(r"x([\+\-])(\d+)", expr)
+    if match:
+        sign, number = match.groups()
+        return str(-int(number)) if sign == "+" else str(int(number))
+    return "?"
+
+
+def error_explanation(type_, arg, condition):
+    if type_ == "racine":
+        return f"Pas de souci. Pour que la racine carrée soit définie, ce qui est à l’intérieur doit être positif ou nul, donc ici {condition}."
+    elif type_ == "log":
+        return f"Aucun problème. Pour que le logarithme soit défini, l’argument doit être strictement positif, donc ici {condition}."
+    elif type_ == "denominateur":
+        return f"Très bien. Le dénominateur ne doit jamais être nul. On a donc {condition}."
+    return f"Voici la condition correcte : {condition}"
+
+
+def match_condition(reply, type_, arg):
+    reply = reply.replace(" ", "").replace(">=", "≥").replace("!=", "≠")
+    patterns = {
+        "racine": ["≥0", "positif", "nonnégatif", f"{arg}≥0"],
+        "log": [">0", "strictementpositif", f"{arg}>0"],
+        "denominateur": ["≠0", "différent", "nonnul", f"{arg}≠0"],
+    }
+    return any(p in reply for p in patterns.get(type_, []))
+
+
+def match_solution(reply, attendu):
+    reply = reply.replace(" ", "").replace(">=", "≥").replace("!=", "≠")
+    return attendu.replace(" ", "") in reply
+
+
+def condition_to_set(condition_str):
+    if "?" in condition_str:
+        return S.Reals  # تجاهل الشروط غير المفهومة
+
+    try:
+        if "≥" in condition_str:
+            val = int(condition_str.split("≥")[1].strip())
+            return Interval(val, S.Infinity)
+        elif ">" in condition_str:
+            val = int(condition_str.split(">")[1].strip())
+            return Interval.open(val, S.Infinity)
+        elif "≠" in condition_str:
+            val = int(condition_str.split("≠")[1].strip())
+            return Union(
+                Interval.open(-S.Infinity, val), Interval.open(val, S.Infinity)
+            )
+    except:
+        return S.Reals
+
+    return S.Reals
+
+
+def parse_student_domain(reply):
+    try:
+        reply = reply.lower().replace(" ", "")
+        reply = reply.replace("∞", "oo").replace("+oo", "oo").replace("−", "-")
+        # Enlever "d=" s'il existe
+        reply = reply.replace("d=", "")
+        # [-2,+oo[ ou ]-2,+oo[ ou [ -2 , +oo [
+        match = re.match(r"[\[\]()\]]?(-?\d+)[;,]?(\+?oo)[\[\]()\]]?", reply)
+        if match:
+            a = float(match.group(1))
+            return Interval(
+                float(a),
+                S.Infinity,
+                left_open=reply.startswith("]") or reply.startswith("("),
+            )
+
+        # union de deux intervalles : ]-oo,a[ ∪ ]a,+oo[
+        match_union = re.findall(r"-?oo,(-?\d+)", reply)
+        match_union2 = re.findall(r"(-?\d+),\+?oo", reply)
+        if len(match_union) == 1 and len(match_union2) == 2:
+            a = float(match_union[0])
+            return Union(Interval.open(-S.Infinity, a), Interval.open(a, S.Infinity))
+
+        # ℝ ou reel
+        if "r" in reply or "reel" in reply:
+            return S.Reals
+
+    except:
+        return None
+    return None
+
+
+def is_domain_correct_math(reply, conditions):
+    sets = [condition_to_set(cond) for cond in conditions if "?" not in cond]
+    if not sets:
+        return False, "ℝ"
+
+    correct_domain = sets[0]
+    for s in sets[1:]:
+        correct_domain = correct_domain.intersect(s)
+
+    student_set = parse_student_domain(reply)
+    correct_str = convert_to_notation(correct_domain)
+
+    if student_set is None:
+        return False, correct_str
+
+    # ✅ مقارنة رياضية دقيقة باستخدام SymPy
+    try:
+        if student_set == correct_domain or Eq(student_set, correct_domain):
+            return True, correct_str
+    except:
+        pass
+
+    return False, correct_str
+
+
+def convert_to_notation(interval):
+    if isinstance(interval, Interval):
+        a = "-∞" if interval.start == S.NegativeInfinity else str(interval.start)
+        b = "+∞" if interval.end == S.Infinity else str(interval.end)
+        left = "]" if interval.left_open else "["
+        right = "[" if interval.right_open == False else "["
+        return f"{left}{a}, {b}{right}"
+
+    elif isinstance(interval, Union):
+        parts = [convert_to_notation(i) for i in interval.args]
+        return " ∪ ".join(parts)
+    return "ℝ"
+
+
+def respond(text):
+    return jsonify({"fulfillmentText": text})
+
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
