@@ -132,7 +132,7 @@ def webhook():
     try:
         if student:
             student_set = solveset(student, x, domain=S.Reals) if not isinstance(student, Set) else student
-            if student_set == cond:
+            if student_set.equals(cond):
                 reply = "Très bien, c'est correct."
             else:
                 reply = f"Ce n'est pas correct. La solution est {french_cond}."
