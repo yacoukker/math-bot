@@ -51,7 +51,7 @@ def webhook():
             else:
                 return respond(f"Ce n’est pas tout à fait correct. L’ensemble de définition est : D = {bonne_reponse}\nNe t’inquiète pas, tu peux y arriver avec un peu de pratique !")
         else:
-            return respond("Essaie de donner l’ensemble sous forme d’un intervalle, par exemple : ]2,+∞[ ou ℝ.")
+            return respond("Essaie de donner l’ensemble sous forme d’une condition, par exemple : x ≤ -1 ou x ≥ 2.")
 
     current_type, arg = state["steps"][state["current"]]
     condition = expected_condition(current_type, arg)
@@ -68,11 +68,11 @@ def webhook():
 
     elif state["mode"] == "solution":
         if match_solution(user_input, solution):
-            state["conditions"].append(convert_to_notation(solution))
+            state["conditions"].append(convert_to_logic_notation(solution))
             return next_step(state, session_id, "Bien joué !")
         else:
-            state["conditions"].append(convert_to_notation(solution))
-            return next_step(state, session_id, f"Ce n’est pas tout à fait ça. En réalité, la solution est : {convert_to_notation(solution)}")
+            state["conditions"].append(convert_to_logic_notation(solution))
+            return next_step(state, session_id, f"Ce n’est pas tout à fait ça. En réalité, la solution est : {convert_to_logic_notation(solution)}")
 
 def next_step(state, session_id, message):
     state["current"] += 1
@@ -166,22 +166,23 @@ def match_solution(reply, attendu_set):
     except:
         return False
 
-def condition_to_set(condition_str):
-    if "?" in condition_str:
-        return S.Reals
-    try:
-        if "≥" in condition_str:
-            val = int(condition_str.split("≥")[1].strip())
-            return Interval(val, S.Infinity)
-        elif ">" in condition_str:
-            val = int(condition_str.split(">")[1].strip())
-            return Interval.open(val, S.Infinity)
-        elif "≠" in condition_str:
-            val = int(condition_str.split("≠")[1].strip())
-            return Union(Interval.open(-S.Infinity, val), Interval.open(val, S.Infinity))
-    except:
-        return S.Reals
-    return S.Reals
+def convert_to_logic_notation(set_):
+    def condition_from_interval(interval):
+        conds = []
+        if isinstance(interval, Interval):
+            if interval.start != S.NegativeInfinity:
+                op = '>' if interval.left_open else '≤'
+                conds.append(f"x {op} {interval.start}")
+            if interval.end != S.Infinity:
+                op = '<' if interval.right_open else '≥'
+                conds.append(f"x {op} {interval.end}")
+            return ' et '.join(conds)
+        return str(interval)
+
+    if isinstance(set_, Union):
+        return ' ou '.join(condition_from_interval(i) for i in set_.args)
+    else:
+        return condition_from_interval(set_)
 
 def parse_student_domain(reply):
     try:
@@ -211,7 +212,7 @@ def is_domain_correct_math(reply, conditions):
     for s in sets[1:]:
         correct_domain = correct_domain.intersect(s)
     student_set = parse_student_domain(reply)
-    correct_str = convert_to_notation(correct_domain)
+    correct_str = convert_to_logic_notation(correct_domain)
     if student_set is None:
         return False, correct_str
     try:
@@ -220,18 +221,6 @@ def is_domain_correct_math(reply, conditions):
     except:
         pass
     return False, correct_str
-
-def convert_to_notation(interval):
-    if isinstance(interval, Interval):
-        a = "-∞" if interval.start == S.NegativeInfinity else str(interval.start)
-        b = "+∞" if interval.end == S.Infinity else str(interval.end)
-        left = "]" if interval.left_open else "["
-        right = "[" if not interval.right_open else "["
-        return f"{left}{a}, {b}{right}"
-    elif isinstance(interval, Union):
-        parts = [convert_to_notation(i) for i in interval.args]
-        return " ∪ ".join(parts)
-    return "ℝ"
 
 def respond(text):
     return jsonify({"fulfillmentText": text})
