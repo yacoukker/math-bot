@@ -171,10 +171,10 @@ def convert_to_logic_notation(set_):
         conds = []
         if isinstance(interval, Interval):
             if interval.start != S.NegativeInfinity:
-                op = '>' if interval.left_open else '≤'
+                op = '>=' if not interval.left_open else '>'
                 conds.append(f"x {op} {interval.start}")
             if interval.end != S.Infinity:
-                op = '<' if interval.right_open else '≥'
+                op = '<=' if not interval.right_open else '<'
                 conds.append(f"x {op} {interval.end}")
             return ' et '.join(conds)
         return str(interval)
