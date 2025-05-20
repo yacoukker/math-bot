@@ -68,7 +68,7 @@ def webhook():
 
     elif state["mode"] == "solution":
         if match_solution(user_input, solution):
-            state["conditions"].append(convert_to_logic_notation(solution))
+            state["conditions"].append(solution)
             return next_step(state, session_id, "Bien joué !")
         else:
             state["conditions"].append(convert_to_logic_notation(solution))
@@ -212,7 +212,7 @@ def is_domain_correct_math(reply, conditions):
     for s in sets[1:]:
         correct_domain = correct_domain.intersect(s)
     student_set = parse_student_domain(reply)
-    correct_str = convert_to_logic_notation(correct_domain)
+    correct_str = convert_to_notation(correct_domain)
     if student_set is None:
         return False, correct_str
     try:
