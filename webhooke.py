@@ -144,33 +144,40 @@ def match_solution(reply, attendu_set):
         return False
 
 def parse_logical_expression(expr):
+    # تنظيف أولي
     expr = expr.replace(" ", "").replace("ou", "||").replace("et", "&&") \
                .replace("≥", ">=").replace("≤", "<=") \
                .replace("−", "-").replace("÷", "/")
+
+    # تفكيك حسب "ou"
     parts = expr.split("||")
     intervals = []
+
     for part in parts:
         if ">=" in part:
             _, val = part.split(">=")
-            intervals.append(Interval(float(val), S.Infinity))
+            intervals.append(Interval(float(val), float("inf"), left_closed=True))
         elif "<=" in part:
             _, val = part.split("<=")
-            intervals.append(Interval(S.NegativeInfinity, float(val)))
+            intervals.append(Interval(float("-inf"), float(val), right_closed=True))
         elif ">" in part:
             _, val = part.split(">")
-            intervals.append(Interval.open(float(val), S.Infinity))
+            intervals.append(Interval.open(float(val), float("inf")))
         elif "<" in part:
             _, val = part.split("<")
-            intervals.append(Interval.open(S.NegativeInfinity, float(val)))
+            intervals.append(Interval.open(float("-inf"), float(val)))
         elif "!=" in part or "≠" in part:
             val = part.split("≠")[-1] if "≠" in part else part.split("!=")[-1]
+            a = float(val)
             intervals.append(Union(
-                Interval.open(S.NegativeInfinity, float(val)),
-                Interval.open(float(val), S.Infinity)
+                Interval.open(float("-inf"), a),
+                Interval.open(a, float("inf"))
             ))
+
     if len(intervals) == 1:
         return intervals[0]
     return Union(*intervals)
+
 
 def convert_to_logical_notation(interval):
     def single_condition(i):
