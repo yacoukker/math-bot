@@ -184,25 +184,54 @@ def convert_to_logic_notation(set_):
     else:
         return condition_from_interval(set_)
 
+# ... (reste du code intact jusqu'à la fonction parse_student_domain)
+
 def parse_student_domain(reply):
     try:
-        reply = reply.lower().replace(" ", "")
-        reply = reply.replace("∞", "oo").replace("+oo", "oo").replace("−", "-")
-        reply = reply.replace("d=", "")
+        reply = reply.lower().replace(" ", "").replace("∞", "oo").replace("−", "-")
+        reply = reply.replace("d=", "").replace("ou", "||").replace("et", "&&")
+
+        # Cas: x<=-1||x>=2 ou x≤-1||x≥2
+        parts = re.split(r"\|\|", reply)
+        intervals = []
+        for part in parts:
+            match = re.match(r"x([<≥≤>]=?)(-?\d+(\.\d+)?)", part)
+            if match:
+                op, val, _ = match.groups()
+                val = float(val)
+                if op in ('<=', '≤'):
+                    intervals.append(Interval(-S.Infinity, val))
+                elif op == '<':
+                    intervals.append(Interval.open(-S.Infinity, val))
+                elif op in ('>=', '≥'):
+                    intervals.append(Interval(val, S.Infinity))
+                elif op == '>':
+                    intervals.append(Interval.open(val, S.Infinity))
+
+        if len(intervals) == 1:
+            return intervals[0]
+        elif len(intervals) > 1:
+            return Union(*intervals)
+
+        # Cas: format intervalle classique (conservé)
         match = re.match(r"[\[\]()\]]?(-?\d+)[;,]?([+]?oo)[\[\]()\]]?", reply)
         if match:
             a = float(match.group(1))
             return Interval(float(a), S.Infinity, left_open=reply.startswith("]") or reply.startswith("("))
+
         match_union = re.findall(r"-?oo,(-?\d+)", reply)
         match_union2 = re.findall(r"(-?\d+),\+?oo", reply)
         if len(match_union) == 1 and len(match_union2) == 2:
             a = float(match_union[0])
             return Union(Interval.open(-S.Infinity, a), Interval.open(a, S.Infinity))
+
         if "r" in reply or "reel" in reply:
             return S.Reals
     except:
         return None
     return None
+
+
 
 def is_domain_correct_math(reply, conditions):
     sets = [condition_to_set(cond) for cond in conditions if "?" not in cond]
