@@ -196,14 +196,30 @@ def convert_to_logical_notation(interval):
     return single_condition(interval)
 
 def is_domain_correct_math(reply, conditions):
+    # تحويل كل الشروط إلى مجموعات (Intervals/Unions)
     sets = [c if isinstance(c, (Interval, Union)) else parse_logical_expression(c) for c in conditions]
     correct_domain = sets[0]
     for s in sets[1:]:
         correct_domain = correct_domain.intersect(s)
+
+    # تحويل جواب التلميذ
     student_set = parse_student_domain(reply)
-    if student_set and student_set.equals(correct_domain):
-        return True, convert_to_interval_notation(correct_domain)
-    return False, convert_to_interval_notation(correct_domain)
+    correct_str = convert_to_interval_notation(correct_domain)
+
+    if student_set is None:
+        return False, correct_str
+
+    # ✅ معالجة حالة S.Reals بشكل خاص
+    try:
+        if student_set == correct_domain:
+            return True, correct_str
+        elif hasattr(student_set, "equals") and student_set.equals(correct_domain):
+            return True, correct_str
+    except Exception as e:
+        print("Erreur comparaison ensemble:", e)
+
+    return False, correct_str
+
 
 def parse_student_domain(reply):
     try:
