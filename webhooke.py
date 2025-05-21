@@ -10,6 +10,8 @@ session_state = {}
 def webhook():
     req = request.get_json()
     user_input = req.get("queryResult", {}).get("queryText", "").strip().lower()
+    print("[Webhook ACTIVÉ] une requête a été reçue.")
+
     req = request.get_json()
 
     try:
