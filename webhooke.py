@@ -8,20 +8,10 @@ session_state = {}
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
+    print("[Webhook ACTIVÉ] une requête a été reçue.")
     req = request.get_json()
     user_input = req.get("queryResult", {}).get("queryText", "").strip().lower()
-    print("[Webhook ACTIVÉ] une requête a été reçue.")
-
-    req = request.get_json()
-
-    try:
-        user_input = req.get("queryResult", {}).get("queryText", "").strip().lower()
-    except:
-        user_input = "[input non détecté]"
-    
-    print("Entrée reçue (brut):", req)
-    print("Entrée reçue:", user_input)
-
+   
     session_id = req.get("session", "default")
 
     if "f(x)=" in user_input:
