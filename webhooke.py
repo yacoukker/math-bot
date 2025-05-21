@@ -1,5 +1,5 @@
 from flask import Flask, request, jsonify
-from sympy import symbols, Interval, Union, S, simplify, Eq, solveset
+from sympy import symbols, Interval, Union, S, Eq, solveset, simplify
 import re, os
 
 app = Flask(__name__)
@@ -11,7 +11,8 @@ def webhook():
     print("[Webhook ACTIVÉ] une requête a été reçue.")
     req = request.get_json()
     user_input = req.get("queryResult", {}).get("queryText", "").strip().lower()
-   
+    print("Entrée reçue:", user_input)
+
     session_id = req.get("session", "default")
 
     if "f(x)=" in user_input:
@@ -25,11 +26,9 @@ def webhook():
         expr = extract_expr(user_input)
         if not expr:
             return respond("Écris la fonction sous la forme : f(x) = ...")
-
         components = analyse_expression(expr)
         if not components:
             return respond("La fonction est définie sur ℝ : aucun log, racine ni dénominateur détecté.")
-
         session_state[session_id] = {
             "expr": expr,
             "steps": components,
@@ -38,7 +37,6 @@ def webhook():
             "conditions": [],
             "attente_finale": False,
         }
-
         current_type, arg = components[0]
         return respond(f"Commençons. Quelle est la condition sur {component_label(current_type)} {arg} pour qu’il soit défini ?")
 
@@ -53,11 +51,11 @@ def webhook():
             else:
                 return respond(f"Ce n’est pas tout à fait correct. L’ensemble de définition est : D = {bonne_reponse}\nNe t’inquiète pas, tu peux y arriver avec un peu de pratique !")
         else:
-            return respond("Essaie de donner l’ensemble sous forme d’une condition, par exemple : x ≤ -1 ou x ≥ 2.")
+            return respond("Essaie de donner l’ensemble sous forme d’un intervalle, par exemple : ]2,+∞[ ou ℝ.")
 
     current_type, arg = state["steps"][state["current"]]
     condition = expected_condition(current_type, arg)
-    solution = expected_solution(current_type, arg)
+    solution = expected_solution_set(current_type, arg)
 
     if state["mode"] == "condition":
         if match_condition(user_input, current_type, arg):
@@ -73,23 +71,21 @@ def webhook():
             state["conditions"].append(solution)
             return next_step(state, session_id, "Bien joué !")
         else:
-            state["conditions"].append(convert_to_logic_notation(solution))
-            return next_step(state, session_id, f"Ce n’est pas tout à fait ça. En réalité, la solution est : {convert_to_logic_notation(solution)}")
+            state["conditions"].append(solution)
+            return next_step(state, session_id, f"Ce n’est pas tout à fait ça. En réalité, la solution est : {convert_to_logical_notation(solution)}")
 
 def next_step(state, session_id, message):
     state["current"] += 1
     state["mode"] = "condition"
-
     if state["current"] < len(state["steps"]):
         next_type, next_arg = state["steps"][state["current"]]
         return respond(message + f"\n\nPassons à {component_label(next_type)}. Quelle est la condition sur {next_arg} pour qu’il soit défini ?")
     else:
         state["attente_finale"] = True
-        conds = state["conditions"]
-        conditions_text = "\n".join(conds)
+        conditions_text = "\n".join([convert_to_logical_notation(c) for c in state["conditions"]])
         return respond(message + "\n\nVoici les conditions obtenues sur x :\n" + conditions_text + "\nPeux-tu en déduire maintenant l’ensemble de définition D ?")
 
-# ==== outils ====
+# === Fonctions auxiliaires ===
 
 def extract_expr(text):
     match = re.search(r"f\(x\)\s*=\s*(.+)", text)
@@ -119,38 +115,16 @@ def expected_condition(type_, arg):
         return f"{arg} ≠ 0"
     return ""
 
-def expected_solution(type_, arg):
+def expected_solution_set(type_, arg):
+    from sympy.parsing.sympy_parser import parse_expr
+    expr = parse_expr(arg.replace("^", "**"))
     if type_ == "racine":
-        return solve_for_x(arg, '≥')
+        return solveset(expr >= 0, x, domain=S.Reals)
     elif type_ == "log":
-        return solve_for_x(arg, '>')
+        return solveset(expr > 0, x, domain=S.Reals)
     elif type_ == "denominateur":
-        return solve_for_x(arg, '≠')
+        return S.Reals - solveset(Eq(expr, 0), x, domain=S.Reals)
     return S.Reals
-
-def solve_for_x(expr, op):
-    expr = expr.replace("^", "**")
-    try:
-        f = simplify(expr)
-        if op == '≥':
-            return solveset(f >= 0, x, domain=S.Reals)
-        elif op == '>':
-            return solveset(f > 0, x, domain=S.Reals)
-        elif op == '≠':
-            return S.Reals - solveset(Eq(f, 0), x, domain=S.Reals)
-        else:
-            return S.Reals
-    except:
-        return S.Reals
-
-def error_explanation(type_, arg, condition):
-    if type_ == "racine":
-        return f"Pas de souci. Pour que la racine carrée soit définie, ce qui est à l’intérieur doit être positif ou nul, donc ici {condition}."
-    elif type_ == "log":
-        return f"Aucun problème. Pour que le logarithme soit défini, l’argument doit être strictement positif, donc ici {condition}."
-    elif type_ == "denominateur":
-        return f"Très bien. Le dénominateur ne doit jamais être nul. On a donc {condition}."
-    return f"Voici la condition correcte : {condition}"
 
 def match_condition(reply, type_, arg):
     reply = reply.replace(" ", "").replace(">=", "≥").replace("!=", "≠")
@@ -163,95 +137,94 @@ def match_condition(reply, type_, arg):
 
 def match_solution(reply, attendu_set):
     try:
-        student_set = parse_student_domain(reply)
+        student_set = parse_logical_expression(reply)
         return student_set.equals(attendu_set)
-    except:
+    except Exception as e:
+        print("Erreur de comparaison:", e)
         return False
 
-def convert_to_logic_notation(set_):
-    def condition_from_interval(interval):
-        conds = []
-        if isinstance(interval, Interval):
-            if interval.start != S.NegativeInfinity:
-                op = '>=' if not interval.left_open else '>'
-                conds.append(f"x {op} {interval.start}")
-            if interval.end != S.Infinity:
-                op = '<=' if not interval.right_open else '<'
-                conds.append(f"x {op} {interval.end}")
-            return ' et '.join(conds)
-        return str(interval)
+def parse_logical_expression(expr):
+    expr = expr.replace(" ", "").replace("ou", "||").replace("et", "&&") \
+               .replace("≥", ">=").replace("≤", "<=") \
+               .replace("−", "-").replace("÷", "/")
+    parts = expr.split("||")
+    intervals = []
+    for part in parts:
+        if ">=" in part:
+            _, val = part.split(">=")
+            intervals.append(Interval(float(val), S.Infinity))
+        elif "<=" in part:
+            _, val = part.split("<=")
+            intervals.append(Interval(S.NegativeInfinity, float(val)))
+        elif ">" in part:
+            _, val = part.split(">")
+            intervals.append(Interval.open(float(val), S.Infinity))
+        elif "<" in part:
+            _, val = part.split("<")
+            intervals.append(Interval.open(S.NegativeInfinity, float(val)))
+        elif "!=" in part or "≠" in part:
+            val = part.split("≠")[-1] if "≠" in part else part.split("!=")[-1]
+            intervals.append(Union(
+                Interval.open(S.NegativeInfinity, float(val)),
+                Interval.open(float(val), S.Infinity)
+            ))
+    if len(intervals) == 1:
+        return intervals[0]
+    return Union(*intervals)
 
-    if isinstance(set_, Union):
-        return ' ou '.join(condition_from_interval(i) for i in set_.args)
-    else:
-        return condition_from_interval(set_)
-
-# ... (reste du code intact jusqu'à la fonction parse_student_domain)
-
-def parse_student_domain(reply):
-    try:
-        reply = reply.lower().replace(" ", "").replace("∞", "oo").replace("−", "-")
-        reply = reply.replace("d=", "").replace("ou", "||").replace("et", "&&")
-
-        # Cas: x<=-1||x>=2 ou x≤-1||x≥2
-        parts = re.split(r"\|\|", reply)
-        intervals = []
-        for part in parts:
-            match = re.match(r"x([<≥≤>]=?)(-?\d+(\.\d+)?)", part)
-            if match:
-                op, val, _ = match.groups()
-                val = float(val)
-                if op in ('<=', '≤'):
-                    intervals.append(Interval(-S.Infinity, val))
-                elif op == '<':
-                    intervals.append(Interval.open(-S.Infinity, val))
-                elif op in ('>=', '≥'):
-                    intervals.append(Interval(val, S.Infinity))
-                elif op == '>':
-                    intervals.append(Interval.open(val, S.Infinity))
-
-        if len(intervals) == 1:
-            return intervals[0]
-        elif len(intervals) > 1:
-            return Union(*intervals)
-
-        # Cas: format intervalle classique (conservé)
-        match = re.match(r"[\[\]()\]]?(-?\d+)[;,]?([+]?oo)[\[\]()\]]?", reply)
-        if match:
-            a = float(match.group(1))
-            return Interval(float(a), S.Infinity, left_open=reply.startswith("]") or reply.startswith("("))
-
-        match_union = re.findall(r"-?oo,(-?\d+)", reply)
-        match_union2 = re.findall(r"(-?\d+),\+?oo", reply)
-        if len(match_union) == 1 and len(match_union2) == 2:
-            a = float(match_union[0])
-            return Union(Interval.open(-S.Infinity, a), Interval.open(a, S.Infinity))
-
-        if "r" in reply or "reel" in reply:
-            return S.Reals
-    except:
-        return None
-    return None
-
-
+def convert_to_logical_notation(interval):
+    def single_condition(i):
+        if isinstance(i, Interval):
+            parts = []
+            if i.start != S.NegativeInfinity:
+                op = ">" if i.left_open else "≥"
+                parts.append(f"x {op} {i.start}")
+            if i.end != S.Infinity:
+                op = "<" if i.right_open else "≤"
+                parts.append(f"x {op} {i.end}")
+            return " et ".join(parts)
+        return str(i)
+    if isinstance(interval, Union):
+        return " ou ".join(single_condition(i) for i in interval.args)
+    return single_condition(interval)
 
 def is_domain_correct_math(reply, conditions):
-    sets = [condition_to_set(cond) for cond in conditions if "?" not in cond]
-    if not sets:
-        return False, "ℝ"
+    sets = [c if isinstance(c, (Interval, Union)) else parse_logical_expression(c) for c in conditions]
     correct_domain = sets[0]
     for s in sets[1:]:
         correct_domain = correct_domain.intersect(s)
     student_set = parse_student_domain(reply)
-    correct_str = convert_to_notation(correct_domain)
-    if student_set is None:
-        return False, correct_str
+    if student_set and student_set.equals(correct_domain):
+        return True, convert_to_interval_notation(correct_domain)
+    return False, convert_to_interval_notation(correct_domain)
+
+def parse_student_domain(reply):
     try:
-        if student_set.equals(correct_domain):
-            return True, correct_str
+        reply = reply.lower().replace(" ", "").replace("∞", "oo")
+        if "r" in reply or "reel" in reply:
+            return S.Reals
+        if "u" in reply or "∪" in reply:
+            parts = re.split(r"u|∪", reply)
+            intervals = [parse_student_domain(part) for part in parts]
+            return Union(*intervals)
+        match = re.match(r"[\[\]()\]]?(-?\d+)[,;]?(oo)[\[\]()\]]?", reply)
+        if match:
+            a = float(match.group(1))
+            return Interval(a, S.Infinity)
     except:
-        pass
-    return False, correct_str
+        return None
+    return None
+
+def convert_to_interval_notation(interval):
+    if isinstance(interval, Interval):
+        a = "-∞" if interval.start == S.NegativeInfinity else str(interval.start)
+        b = "+∞" if interval.end == S.Infinity else str(interval.end)
+        left = "]" if interval.left_open else "["
+        right = "[" if not interval.right_open else "["
+        return f"{left}{a}, {b}{right}"
+    elif isinstance(interval, Union):
+        return " ∪ ".join([convert_to_interval_notation(i) for i in interval.args])
+    return str(interval)
 
 def respond(text):
     return jsonify({"fulfillmentText": text})
