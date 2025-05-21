@@ -10,6 +10,7 @@ session_state = {}
 def webhook():
     req = request.get_json()
     user_input = req.get("queryResult", {}).get("queryText", "").strip().lower()
+    print("Entrée reçue:", user_input)
     session_id = req.get("session", "default")
 
     if "f(x)=" in user_input:
