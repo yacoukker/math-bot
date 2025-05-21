@@ -223,20 +223,40 @@ def is_domain_correct_math(reply, conditions):
 
 def parse_student_domain(reply):
     try:
-        reply = reply.lower().replace(" ", "").replace("∞", "oo")
-        if "r" in reply or "reel" in reply:
+        reply = reply.lower().replace(" ", "")
+        reply = reply.replace("∞", "oo").replace("+oo", "oo").replace("−", "-")
+        reply = reply.replace("d=", "").replace("d:", "").replace("=", "")
+        reply = reply.replace("∪", "u")
+
+        # ℝ ou reel
+        if reply in ["r", "ℝ", "reel"]:
             return S.Reals
-        if "u" in reply or "∪" in reply:
-            parts = re.split(r"u|∪", reply)
-            intervals = [parse_student_domain(part) for part in parts]
+
+        # division en cas d'union
+        parts = re.split(r"u", reply)
+        intervals = []
+
+        for part in parts:
+            match = re.match(r"([\[\]])(-?oo|[-+]?\d+)[,;]([-+]?\d+|oo)([\[\]])", part)
+            if match:
+                left_bracket, a, b, right_bracket = match.groups()
+                a = float("-inf") if "oo" in a else float(a)
+                b = float("inf") if "oo" in b else float(b)
+                left_open = left_bracket == "]"
+                right_open = right_bracket == "["
+                intervals.append(Interval(a, b, left_open=left_open, right_open=right_open))
+
+        if len(intervals) == 1:
+            return intervals[0]
+        elif len(intervals) >= 2:
             return Union(*intervals)
-        match = re.match(r"[\[\]()\]]?(-?\d+)[,;]?(oo)[\[\]()\]]?", reply)
-        if match:
-            a = float(match.group(1))
-            return Interval(a, S.Infinity)
-    except:
+
+    except Exception as e:
+        print("Erreur dans parse_student_domain:", e)
         return None
+
     return None
+
 
 def convert_to_interval_notation(interval):
     if isinstance(interval, Interval):
